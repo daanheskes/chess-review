@@ -5,17 +5,20 @@ import { winPercent } from './winchance'
 import { PHASES, type Color, type Label, type Phase, type Review, type Side } from './types'
 
 /**
- * Puzzles made from a player's own mistakes. A review already holds the position before every
+ * Puzzles made from a player's own games. A review already holds the position before every
  * move, the engine's best move and the line behind it, so a candidate needs no new analysis.
  * Whether the best move is the only good one is a separate question: see `verifyPuzzle`.
  */
 
 /** A mistake has to cost at least this much win chance (percentage points) to be worth a puzzle. */
 export const PUZZLE_MIN_LOSS = 20
+/** A separate opening puzzle is eligible only when it loses more than one evaluation point. */
+export const OPENING_PUZZLE_MIN_CP_LOSS = 100
 /** Before the mistake the player must not be lost already, and must not be winning with ease. */
 export const PUZZLE_WIN_RANGE = [20, 90] as const
 
 export interface PuzzleCandidate {
+  kind: 'miss'
   /** Index of the move in `review.moves`; the position is `review.fens[moveIndex]`. */
   moveIndex: number
   fen: string
@@ -31,24 +34,39 @@ export interface PuzzleCandidate {
   label: Label
   /** Win chance (%) the player gave up, and held before the move. */
   loss: number
+  /** Centipawns lost, from the mover's point of view. */
+  cpLoss: number
   winBefore: number
   phase: Phase
+  /** Whether the game's named opening is a known gambit. */
+  gambit: boolean
 }
+
+/** Puzzle kinds retained in storage; `hit` only appears in records from older versions. */
+export type PuzzleKind = 'miss' | 'hit'
 
 const colorOf = (side: Side): Color => (side === 'white' ? 'w' : 'b')
 
-/** Candidates from one review, for the player's side, worst mistakes first. */
+/** Miss candidates from one review for the player's side, worst first. */
 export function puzzleCandidates(review: Review, side: Side): PuzzleCandidate[] {
   const color = colorOf(side)
+  const gambit = /gambit\b/i.test(review.opening)
   const out: PuzzleCandidate[] = []
   review.moves.forEach((m, i) => {
-    if (m.color !== color || !isKeyMoment(m.label)) return
-    if (m.loss < PUZZLE_MIN_LOSS || !m.bestUci || m.bestUci === m.uci) return
-    if (m.winBefore < PUZZLE_WIN_RANGE[0] || m.winBefore > PUZZLE_WIN_RANGE[1]) return
+    if (m.color !== color || !m.bestUci) return
+    if (m.bestUci === m.uci) return
+    const regularMiss =
+      isKeyMoment(m.label) &&
+      m.loss >= PUZZLE_MIN_LOSS &&
+      m.winBefore >= PUZZLE_WIN_RANGE[0] &&
+      m.winBefore <= PUZZLE_WIN_RANGE[1]
+    const openingMiss = m.phase === 'opening' && m.cpLoss > OPENING_PUZZLE_MIN_CP_LOSS && !gambit
+    if (!regularMiss && !openingMiss) return
     const fen = review.fens[i]
     if (!fen || turnOf(fen) !== color) return
     const line = review.lines[i] ?? []
     out.push({
+      kind: 'miss',
       moveIndex: i,
       fen,
       color,
@@ -59,8 +77,10 @@ export function puzzleCandidates(review: Review, side: Side): PuzzleCandidate[] 
       playedSan: m.san,
       label: m.label,
       loss: m.loss,
+      cpLoss: m.cpLoss,
       winBefore: m.winBefore,
       phase: PHASES.includes(m.phase) ? m.phase : 'middlegame',
+      gambit,
     })
   })
   return out.sort((a, b) => b.loss - a.loss)

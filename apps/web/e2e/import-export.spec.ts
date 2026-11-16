@@ -18,7 +18,9 @@ function watchForProblems(page: Page) {
 
 /** Lichess's games export, as ndjson; the real API sends Access-Control-Allow-Origin: *. */
 async function mockLichess(page: Page) {
+  let requests = 0
   await page.route('https://lichess.org/api/games/user/**', (route) => {
+    requests++
     const game = (id: string, pgn: string, lastMoveAt: number, winner: string) => ({
       id,
       variant: 'standard',
@@ -46,6 +48,7 @@ async function mockLichess(page: Page) {
         .join('\n'),
     })
   })
+  return () => requests
 }
 
 test('lists Lichess games and reviews them all in a queue that survives a reload', async ({ page }) => {
@@ -64,6 +67,21 @@ test('lists Lichess games and reviews them all in a queue that survives a reload
   await expect(page.locator('.gamerow .g-action')).toHaveText(['Open', 'Open'], { timeout: 90_000 })
   await expect(page.locator('.queuebar')).toHaveCount(0)
   expect(problems).toEqual([])
+})
+
+test('does not refetch remote games when queued reviews finish', async ({ page }) => {
+  const requests = await mockLichess(page)
+  await page.goto('/')
+  await page.getByLabel('Lichess').check()
+  await page.getByLabel('Lichess username').fill('Legal')
+  await page.getByRole('button', { name: 'Load games' }).click()
+  await expect(page.locator('.gamerow')).toHaveCount(2)
+  expect(requests()).toBe(1)
+
+  await page.getByRole('button', { name: 'Review all 2 new games' }).click()
+  await expect(page.locator('.gamerow .g-action')).toHaveText(['Open', 'Open'], { timeout: 90_000 })
+  expect(requests()).toBe(1)
+  await expect(page.getByRole('button', { name: 'Load games' })).toBeVisible()
 })
 
 test('exports a review as annotated PGN and as a file that opens on another device', async ({

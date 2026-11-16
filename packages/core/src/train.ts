@@ -1,4 +1,11 @@
-import type { Puzzle, PuzzleLimits } from './puzzles'
+import {
+  OPENING_PUZZLE_MIN_CP_LOSS,
+  PUZZLE_MIN_LOSS,
+  PUZZLE_WIN_RANGE,
+  type Puzzle,
+  type PuzzleKind,
+  type PuzzleLimits,
+} from './puzzles'
 import type { Perspective } from './tactics/explain'
 import type { Phase } from './types'
 
@@ -41,10 +48,43 @@ export interface PuzzleRecord {
    * when it could not be worked out, e.g. the game's review is gone.
    */
   perspective?: PuzzlePerspective | null
+  /** Older records may be hits; current puzzle generation stores misses only. */
+  kind?: PuzzleKind
   /** What the position was checked with. A stricter check later can re-run the older ones. */
   checkedWith: PuzzleLimits
   puzzle: Puzzle | null
   progress: Progress
+}
+
+export type PuzzlePool = 'miss' | 'positional' | 'opening-miss' | 'completed'
+
+/** Puzzles in one Train tab. Positional and opening misses are subsets of Misses. */
+export function withPool(records: readonly PuzzleRecord[], pool: PuzzlePool): readonly PuzzleRecord[] {
+  return records.filter((r) => {
+    if (r.puzzle === null) return false
+    if (pool === 'completed') return r.progress.attempts > 0
+    const isHit =
+      typeof r.puzzle.playedUci === 'string' &&
+      typeof r.puzzle.solution === 'string' &&
+      r.puzzle.playedUci === r.puzzle.solution
+    const kind = r.kind ?? (isHit ? 'hit' : 'miss')
+    if (pool === 'positional')
+      return (
+        kind === 'miss' &&
+        r.tactic === null &&
+        r.puzzle.loss >= PUZZLE_MIN_LOSS &&
+        r.puzzle.winBefore >= PUZZLE_WIN_RANGE[0] &&
+        r.puzzle.winBefore <= PUZZLE_WIN_RANGE[1]
+      )
+    if (kind !== 'miss') return false
+    if (pool === 'miss') return true
+    return (
+      r.puzzle.phase === 'opening' &&
+      typeof r.puzzle.cpLoss === 'number' &&
+      r.puzzle.cpLoss > OPENING_PUZZLE_MIN_CP_LOSS &&
+      r.puzzle.gambit === false
+    )
+  })
 }
 
 /** The progress after one answer. */
@@ -79,14 +119,17 @@ export function queue(records: readonly PuzzleRecord[], now: number): Queue {
   }
 }
 
-/** The puzzle to ask next, skipping those already asked in this sitting. Due ones come first. */
+/** The next never-answered puzzle, skipping those already asked in this sitting. */
 export function pickNext(
   records: readonly PuzzleRecord[],
   now: number,
   skip: ReadonlySet<string> = new Set(),
 ): PuzzleRecord | null {
-  const q = queue(records, now)
-  return [...q.due, ...q.fresh].find((r) => !skip.has(r.id)) ?? null
+  const q = queue(
+    records.filter((r) => r.progress.attempts === 0),
+    now,
+  )
+  return q.fresh.find((r) => !skip.has(r.id)) ?? null
 }
 
 export interface Summary {
@@ -158,6 +201,9 @@ export interface Today {
  */
 export function today(records: readonly PuzzleRecord[], now: number, dayStart: number, goal: number): Today {
   const done = records.filter((r) => r.puzzle !== null && (r.progress.lastAt ?? 0) >= dayStart).length
-  const q = queue(records, now)
+  const q = queue(
+    records.filter((r) => r.progress.attempts === 0),
+    now,
+  )
   return { done, target: Math.max(done, Math.min(goal, done + q.due.length + q.fresh.length)) }
 }

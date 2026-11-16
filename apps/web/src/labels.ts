@@ -32,7 +32,7 @@ export const META: Record<Label, { color: string; text: string; fg: string; glyp
     color: '#9c7b5a',
     text: 'var(--t-book)',
     fg: '#fff',
-    glyph: GLYPH.Book,
+    glyph: '📖',
     help: 'A known opening move',
   },
   Best: {
@@ -46,14 +46,14 @@ export const META: Record<Label, { color: string; text: string; fg: string; glyp
     color: '#5ba77d',
     text: 'var(--t-excellent)',
     fg: '#fff',
-    glyph: GLYPH.Excellent,
+    glyph: '👍',
     help: 'Gave up 2% of win chance or less',
   },
   Good: {
     color: '#a3b57a',
     text: 'var(--t-good)',
     fg: '#16222b',
-    glyph: GLYPH.Good,
+    glyph: '✓',
     help: 'Gave up 2–5% of win chance',
   },
   Inaccuracy: {

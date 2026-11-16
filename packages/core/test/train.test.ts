@@ -9,6 +9,7 @@ import {
   queue,
   summarize,
   today,
+  withPool,
   withTactic,
   type Puzzle,
   type PuzzleRecord,
@@ -66,18 +67,18 @@ describe('queue and pickNext', () => {
     expect([q.due, q.fresh, q.waiting].map((l) => l.map((r) => r.id))).toEqual([['a'], ['b'], ['c']])
   })
 
-  it('asks due puzzles first, then new ones with the biggest mistake first', () => {
+  it('asks never-answered puzzles with the biggest mistake first, not completed ones', () => {
     const records = [
       record('small', {}, { loss: 22 }),
       record('big', {}, { loss: 60 }),
       record('again', asked(NOW - 5)),
     ]
-    expect(pickNext(records, NOW)!.id).toBe('again')
-    expect(pickNext(records, NOW, new Set(['again']))!.id).toBe('big')
+    expect(pickNext(records, NOW)!.id).toBe('big')
+    expect(pickNext(records, NOW, new Set(['big']))!.id).toBe('small')
     expect(pickNext(records, NOW, new Set(['again', 'big', 'small']))).toBeNull()
   })
 
-  it('has nothing to ask when everything is waiting', () => {
+  it('has nothing to ask when every puzzle has already been answered', () => {
     expect(pickNext([record('a', asked(NOW + DAY))], NOW)).toBeNull()
   })
 })
@@ -108,6 +109,59 @@ describe('withTactic', () => {
     expect(withTactic(rs, 'fork').map((r) => r.id)).toEqual(['a'])
     expect(withTactic(rs, 'skewer')).toEqual([])
     expect(withTactic(rs, null)).toBe(rs)
+  })
+})
+
+describe('withPool', () => {
+  const completed = record('completed', {
+    progress: { box: 1, due: NOW + DAY, attempts: 1, solved: 1, lastAt: NOW },
+  })
+  const rs = [
+    record('boundary', {}, { phase: 'opening', cpLoss: 100, gambit: false }),
+    record('opening-miss', {}, { phase: 'opening', cpLoss: 101, gambit: false }),
+    record('gambit', {}, { phase: 'opening', cpLoss: 200, gambit: true }),
+    record('later', {}, { phase: 'middlegame', cpLoss: 200, gambit: false }),
+    record(
+      'hit',
+      { kind: 'hit' },
+      { phase: 'opening', cpLoss: 0, gambit: false, playedUci: 'e2e4', solution: 'e2e4' },
+    ),
+    record('positional', {}, { loss: 25, winBefore: 60 }),
+    record('tactical', { tactic: 'fork' }, { loss: 30, winBefore: 60 }),
+    record('small-loss', {}, { loss: 19, winBefore: 60 }),
+    record('lost-position', {}, { loss: 30, winBefore: 91 }),
+    record('unknown-explanation', { tactic: undefined }, { loss: 30, winBefore: 60 }),
+    completed,
+  ]
+
+  it('filters opening misses to losses strictly over a pawn and excludes gambits', () => {
+    expect(withPool(rs, 'opening-miss').map((r) => r.id)).toEqual(['opening-miss'])
+  })
+
+  it('keeps misses and excludes legacy hits from practice pools', () => {
+    expect(withPool(rs, 'miss').map((r) => r.id)).toEqual([
+      'boundary',
+      'opening-miss',
+      'gambit',
+      'later',
+      'positional',
+      'tactical',
+      'small-loss',
+      'lost-position',
+      'unknown-explanation',
+      'completed',
+    ])
+    expect(withPool([record('legacy-hit', {}, { playedUci: 'e2e4', solution: 'e2e4' })], 'miss')).toEqual([])
+  })
+
+  it('filters positional mistakes by significant win-chance loss and no recognized explanation', () => {
+    expect(withPool(rs, 'positional').map((r) => r.id)).toEqual(['positional'])
+  })
+
+  it('keeps answered puzzles out of the next-puzzle queue and exposes them in Completed', () => {
+    expect(withPool([completed], 'miss')).toEqual([completed])
+    expect(withPool([completed], 'completed')).toEqual([completed])
+    expect(pickNext([completed], NOW)).toBeNull()
   })
 })
 

@@ -1,5 +1,6 @@
 import {
   coachLine,
+  checkStatus,
   explainReviewMove,
   formatClock,
   formatSpent,
@@ -8,6 +9,7 @@ import {
   winPercent,
   type Counts,
   type Explanation,
+  type Label,
   type MoveReview as Move,
   type Phase,
   type Review,
@@ -18,8 +20,9 @@ import { Chessboard } from 'react-chessboard'
 import { EvalGraph } from './EvalGraph'
 import { explore, fenOf, lineMoves, play, stepTo, targets, type Exploration } from './explore'
 import { cancelReview, downloadReview, useLiveEval, useReviewState } from './hooks'
+import { LEGAL_MOVE_HOVER_COLOR, LegalMoveMarker, SQUARE_MARK_COLOR } from './LegalMoveMarker'
 import { TimeChart } from './TimeChart'
-import { ERRORS, META, ORDER, evalText, isKeyMoment, isNotable } from './labels'
+import { ERRORS, META, ORDER, evalText, isKeyMoment } from './labels'
 import { BOARDS, usePrefs } from './prefs'
 import { NAMED_PIECES, isLight, reducedMotion } from './pieces'
 import type { LiveEval } from './services'
@@ -27,6 +30,15 @@ import { AppHeader } from './AppHeader'
 import { overlayFor } from './tactics'
 import { describePosition } from './describe'
 import { formatRemaining } from './services/eta'
+
+const MOVE_LIST_BADGES: ReadonlySet<Label> = new Set([
+  'Brilliant',
+  'Great',
+  'Inaccuracy',
+  'Mistake',
+  'Miss',
+  'Blunder',
+])
 
 export function ReviewPage({ id, me }: { id: string; me: string | null }) {
   const state = useReviewState(id)
@@ -78,9 +90,6 @@ export function ReviewPage({ id, me }: { id: string; me: string | null }) {
   )
 }
 
-// Where the explored line goes next.
-const LINE_ARROW = 'rgba(76,127,214,0.8)'
-
 function ReviewView({ id, review, me }: { id: string; review: Review; me: string | null }) {
   const mySide: Side | null = !me
     ? null
@@ -92,34 +101,56 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
 
   const [ply, setPly] = useState(0)
   const [flipped, setFlipped] = useState(mySide === 'black')
-  const [showBest, setShowBest] = useState(false)
+  const [showBest, setShowBest] = useState(true)
+  const [showBestAlternative, setShowBestAlternative] = useState(false)
   const [tab, setTab] = useState<'moves' | 'report'>('moves')
   // Moves the user is trying out on the board: never stored, never part of the review.
   const [exploring, setExploring] = useState<Exploration | null>(null)
   // A piece picked up by clicking, waiting for a click on where it goes.
   const [picked, setPicked] = useState<string | null>(null)
+  const [hoveredSquare, setHoveredSquare] = useState<string | null>(null)
+  const [marked, setMarked] = useState<{ fen: string; squares: string[] } | null>(null)
   const sq = BOARDS[usePrefs().board]
   const orientation = flipped ? 'black' : 'white'
   const n = review.fens.length - 1
 
   const goto = (p: number) => {
     setPly(Math.max(0, Math.min(n, p)))
-    setShowBest(false)
+    setShowBestAlternative(false)
     setExploring(null)
     setPicked(null)
+    setHoveredSquare(null)
     setTab('moves')
   }
   const startExploring = (x: Exploration) => {
     setExploring(x)
-    setShowBest(false)
+    setShowBestAlternative(false)
     setPicked(null)
+    setHoveredSquare(null)
     setTab('moves')
   }
 
   const move: Move | null = ply > 0 ? (review.moves[ply - 1] ?? null) : null
-  const bestShown = !exploring && showBest && !!move && !!move.bestUci && move.bestUci !== move.uci
+  const currentBest = review.lines[ply]?.[0]
+  const canShowBestAlternative = !!move?.bestUci && move.bestUci !== move.uci
+  const canShowBest = !!exploring || !!currentBest || canShowBestAlternative
+  const bestShown = !exploring && showBest && showBestAlternative && canShowBestAlternative
+  const setBestVisible = (visible: boolean) => {
+    setShowBest(visible)
+    setShowBestAlternative(visible && !exploring && !currentBest && canShowBestAlternative)
+  }
+  const toggleBest = () => {
+    if (canShowBest) setBestVisible(!showBest)
+  }
+  const toggleBestAlternative = () => {
+    if (!canShowBestAlternative) return
+    const visible = !bestShown
+    setShowBest(visible)
+    setShowBestAlternative(visible)
+  }
   const exploreFen = exploring ? fenOf(exploring) : null
   const fen = exploreFen ?? (bestShown ? review.fens[ply - 1]! : review.fens[ply]!)
+  const positionCheck = checkStatus(fen)
   const { live, last, thinking } = useLiveEval(exploreFen)
 
   const tactic = useMemo(() => (ply > 0 ? explainReviewMove(review, ply - 1) : null), [review, ply])
@@ -149,7 +180,12 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
     const on = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return
       const t = e.target as HTMLElement
-      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT') return
+      if (
+        (t instanceof HTMLInputElement && t.type !== 'checkbox') ||
+        t.tagName === 'TEXTAREA' ||
+        t.tagName === 'SELECT'
+      )
+        return
       const keys: Record<string, () => void> = exploring
         ? {
             ArrowLeft: () => setExploring(stepTo(exploring, exploring.at - 1)),
@@ -158,6 +194,7 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
             End: () => setExploring(stepTo(exploring, exploring.moves.length)),
             Escape: () => setExploring(null),
             f: () => setFlipped((v) => !v),
+            b: toggleBest,
           }
         : {
             ArrowLeft: () => goto(ply - 1),
@@ -165,7 +202,7 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
             Home: () => goto(0),
             End: () => goto(n),
             f: () => setFlipped((v) => !v),
-            b: () => setShowBest((v) => !v),
+            b: toggleBest,
           }
       const run = keys[e.key]
       if (run) {
@@ -187,15 +224,20 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
           },
           { startSquare: move.bestUci.slice(0, 2), endSquare: move.bestUci.slice(2, 4), color: '#2E8B62' },
         ]
-      : []
-  // While exploring: where the line goes next, and the engine's choice.
+      : showBest && !exploring && currentBest
+        ? [
+            {
+              startSquare: currentBest.slice(0, 2),
+              endSquare: currentBest.slice(2, 4),
+              color: '#2E8B62',
+            },
+          ]
+        : []
+  // While exploring, show the engine's choice.
   const exploreArrows: typeof moveArrows = []
   if (exploring) {
-    const next = exploring.moves[exploring.at]
-    if (next)
-      exploreArrows.push({ startSquare: next.slice(0, 2), endSquare: next.slice(2, 4), color: LINE_ARROW })
-    const best = live?.line[0]
-    if (best && best !== next)
+    const best = showBest ? live?.line[0] : undefined
+    if (best)
       exploreArrows.push({ startSquare: best.slice(0, 2), endSquare: best.slice(2, 4), color: '#2E8B62' })
   }
   // The tactic's own arrow, unless it repeats one already drawn.
@@ -210,8 +252,7 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
 
   const lastUci = exploring ? exploring.moves[exploring.at - 1] : bestShown ? undefined : move?.uci
   const lastSquares = lastUci ? [lastUci.slice(0, 2), lastUci.slice(2, 4)] : []
-  const badge =
-    move && !bestShown && !exploring && (isNotable(move.label) || move.label === 'Best') ? move : null
+  const badge = move && !bestShown && !exploring ? move : null
   const dots = picked ? targets(fen, picked) : []
 
   const top: Side = orientation === 'white' ? 'black' : 'white'
@@ -271,45 +312,100 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
                       boardOrientation: orientation,
                       pieces: NAMED_PIECES,
                       allowDragging: true,
-                      onPieceDrop: ({ sourceSquare, targetSquare }) =>
-                        targetSquare !== null && tryMove(sourceSquare, targetSquare),
+                      dropSquareStyle: { boxShadow: 'none' },
+                      onPieceDrag: ({ piece, square }) => {
+                        const mine = square !== null && piece.pieceType[0] === turn
+                        setPicked(mine ? square : null)
+                      },
+                      onPieceDragCancel: () => {
+                        setPicked(null)
+                        setHoveredSquare(null)
+                      },
+                      onPieceDrop: ({ sourceSquare, targetSquare }) => {
+                        const valid = targetSquare !== null && tryMove(sourceSquare, targetSquare)
+                        setPicked(targetSquare === sourceSquare ? sourceSquare : null)
+                        setHoveredSquare(null)
+                        return valid
+                      },
+                      onMouseOverSquare: ({ square }) => setHoveredSquare(square),
+                      onMouseOutSquare: ({ square }) => {
+                        setHoveredSquare((current) => (current === square ? null : current))
+                      },
+                      onSquareMouseDown: ({ piece, square }, event) => {
+                        if (event.button !== 0) return
+                        const mine = piece && piece.pieceType[0] === turn
+                        if (mine) setPicked(square)
+                      },
                       onSquareClick: ({ piece, square }) => {
                         if (picked && dots.includes(square) && tryMove(picked, square)) return
-                        const mine = piece && piece.pieceType[0] === fen.split(' ')[1]
-                        setPicked(mine && square !== picked ? square : null)
+                        const mine = piece && piece.pieceType[0] === turn
+                        if (mine && square !== picked) setPicked(square)
+                        else if (!mine) setPicked(null)
                       },
-                      allowDrawingArrows: false,
-                      clearArrowsOnPositionChange: false,
+                      onSquareRightClick: ({ square }) => {
+                        setMarked((current) => {
+                          const squares = current?.fen === fen ? current.squares : []
+                          return {
+                            fen,
+                            squares: squares.includes(square)
+                              ? squares.filter((s) => s !== square)
+                              : [...squares, square],
+                          }
+                        })
+                      },
+                      allowDrawingArrows: true,
+                      clearArrowsOnClick: true,
+                      clearArrowsOnPositionChange: true,
                       animationDurationInMs: reducedMotion() ? 0 : 160,
                       lightSquareStyle: { backgroundColor: sq.light },
                       darkSquareStyle: { backgroundColor: sq.dark },
                       arrows,
-                      squareRenderer: ({ square, children }) => {
+                      squareRenderer: ({ piece, square, children }) => {
                         const hl = lastSquares.includes(square)
                         const showBadge = badge && square === badge.uci.slice(2, 4)
                         const ring = overlay.rings.includes(square)
                         const dot = dots.includes(square)
+                        const capture = dot && piece !== null && piece.pieceType[0] !== turn
+                        const targetHovered = dot && hoveredSquare === square
+                        const mark = marked?.fen === fen && marked.squares.includes(square)
+                        const kingCheck =
+                          piece?.pieceType[1] === 'K' && piece.pieceType[0] === turn ? positionCheck : null
                         return (
                           <div
                             data-ring={ring || undefined}
+                            data-mark={mark || undefined}
+                            data-king-check={kingCheck ?? undefined}
                             style={{
                               width: '100%',
                               height: '100%',
                               position: 'relative',
-                              backgroundColor:
-                                hl || square === picked
-                                  ? isLight(square)
-                                    ? sq.hlLight
-                                    : sq.hlDark
-                                  : undefined,
+                              backgroundColor: mark
+                                ? SQUARE_MARK_COLOR
+                                : targetHovered
+                                  ? LEGAL_MOVE_HOVER_COLOR
+                                  : hl || square === picked
+                                    ? isLight(square)
+                                      ? sq.hlLight
+                                      : sq.hlDark
+                                    : undefined,
                               boxShadow: ring ? `inset 0 0 0 3px ${ringColor}` : undefined,
                             }}
+                            onMouseEnter={() => setHoveredSquare(square)}
+                            onMouseLeave={() =>
+                              setHoveredSquare((current) => (current === square ? null : current))
+                            }
                           >
                             {children}
-                            {dot && <span className="dot-target" aria-hidden="true" />}
+                            {dot && <LegalMoveMarker capture={capture} hovered={targetHovered} />}
+                            {kingCheck === 'mate' && (
+                              <span className="checkmate-marker" role="img" aria-label="Checkmate">
+                                #
+                              </span>
+                            )}
                             {showBadge && (
                               <span
                                 className="badge"
+                                title={badge.label}
                                 style={{ background: META[badge.label].color, color: META[badge.label].fg }}
                               >
                                 {META[badge.label].glyph}
@@ -372,9 +468,12 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
                 )}
               </div>
             </div>
-            {exploring ? (
-              <p className="hint">Arrow keys step through your moves. Esc returns to the game.</p>
-            ) : (
+            <p className="hint">
+              Right-click a square to highlight it; right-drag to draw an arrow.
+              {exploring &&
+                ' Arrow keys step through your moves; B toggles the best move; Esc returns to the game.'}
+            </p>
+            {!exploring && (
               <details className="shortcuts">
                 <summary>Keyboard shortcuts</summary>
                 <dl>
@@ -403,6 +502,17 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
 
           <aside className={`panel${tab === 'report' ? ' compact' : ''}`}>
             <div className="summary">
+              <label className="best-toggle">
+                <input
+                  type="checkbox"
+                  aria-label="Show best move"
+                  checked={showBest}
+                  disabled={!canShowBest}
+                  onChange={(e) => setBestVisible(e.currentTarget.checked)}
+                />
+                <span>Show best move</span>
+                <kbd aria-hidden="true">B</kbd>
+              </label>
               {(['white', 'black'] as const).map((s) => (
                 <PlayerSummary
                   key={s}
@@ -456,7 +566,7 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
                       mySide={mySide}
                       ply={ply}
                       bestShown={bestShown}
-                      onToggleBest={() => setShowBest((v) => !v)}
+                      onToggleBest={toggleBestAlternative}
                       onExplore={startExploring}
                       prevKey={prevKey}
                       nextKey={nextKey}
@@ -597,6 +707,11 @@ function PlayerSummary({
         ))}
       </div>
       <div className="errs">
+        {(counts.Brilliant ?? 0) > 0 && (
+          <span title="Brilliant">
+            <b style={{ color: META.Brilliant.text }}>{META.Brilliant.glyph}</b> {counts.Brilliant}
+          </span>
+        )}
         {ERRORS.map((l) => (
           <span key={l} title={l}>
             <b style={{ color: META[l].text }}>{META[l].glyph}</b> {counts[l] ?? 0}
@@ -1111,11 +1226,19 @@ function MoveList({ review, ply, onSelect }: { review: Review; ply: number; onSe
               key={m.ply}
               className="mcell"
               aria-current={m.ply === ply}
+              aria-label={`${m.san}, ${m.label}`}
               onClick={() => onSelect(m.ply)}
             >
               {m.san}
-              {isNotable(m.label) && (
-                <b style={{ color: m.ply === ply ? 'inherit' : META[m.label].text }}>{META[m.label].glyph}</b>
+              {MOVE_LIST_BADGES.has(m.label) && (
+                <span
+                  className="move-badge"
+                  title={m.label}
+                  aria-hidden="true"
+                  style={{ background: META[m.label].color, color: META[m.label].fg }}
+                >
+                  {META[m.label].glyph}
+                </span>
               )}
             </button>
           ))}

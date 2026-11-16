@@ -9,6 +9,12 @@ export function positionKey(fen: string): string {
 export const turnOf = (fen: string): Color => (fen.split(' ')[1] === 'b' ? 'b' : 'w')
 export const fullmoveOf = (fen: string): number => Number(fen.split(' ')[5] ?? 1)
 
+export function checkStatus(fen: string): 'check' | 'mate' | null {
+  const c = new Chess(fen)
+  if (c.isCheckmate()) return 'mate'
+  return c.isCheck() ? 'check' : null
+}
+
 /** Positions with no legal move, or no way to mate. The engine cannot search these. */
 export function terminal(fen: string): { winner: Color | null } | null {
   const c = new Chess(fen)

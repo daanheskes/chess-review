@@ -13,6 +13,9 @@ lines and try their own moves with an engine's opinion, without losing or alteri
   exploration from the position shown; clicking a move of the best line, or "Step through it" under
   an explanation, starts one seeded with that line. While exploring, the step buttons and arrow keys
   walk the exploration; Esc, "Back to the game", or navigating the game ends it.
+- **Training puzzles use the same analysis interaction.** "Analyze puzzle" starts at the puzzle's
+  original FEN with its best line ready to step through. The move list, arrow keys, and B/checkbox
+  best-move toggle work the same way, and analysis remains page-only.
 - **Page state only.** An `Exploration` (root position, moves, cursor) lives in React state. It is
   never stored and nothing in a `Review` changes, so the review stays reproducible and its id stable.
 - **Same engine pool, cancellable, limited.** `LiveAnalysis` runs one search per position through

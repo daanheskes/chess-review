@@ -77,14 +77,203 @@ test('reviews a pasted PGN entirely in the browser, under the production CSP', a
   const [white, black] = (await page.locator('.acc-num').allTextContents()).map(Number)
   expect(white).toBeGreaterThan(95) // Morphy played an almost perfect game
   expect(black).toBeLessThan(90)
+  const visibleBadgeLabels = await page
+    .locator('.moves .move-badge')
+    .evaluateAll((badges) => badges.map((badge) => badge.getAttribute('title')))
+  expect(
+    visibleBadgeLabels.every((label) =>
+      ['Brilliant', 'Great', 'Inaccuracy', 'Mistake', 'Miss', 'Blunder'].includes(label ?? ''),
+    ),
+  ).toBe(true)
+  for (const label of ['Book', 'Best', 'Excellent', 'Good']) {
+    await expect(page.locator(`.moves .move-badge[title="${label}"]`)).toHaveCount(0)
+  }
 
   // Stepping to the queen sacrifice (16.Qb8+) shows it as the best move.
   await page.keyboard.press('End')
   await page.getByRole('tab', { name: 'Report' }).click()
   await expect(page.getByText('Move quality')).toBeVisible()
   await expect(page.locator('.rtable').first().locator('tbody tr')).toHaveCount(10)
+  const brilliantCounts = await page
+    .locator('.rtable')
+    .first()
+    .locator('tbody tr')
+    .filter({ hasText: 'Brilliant' })
+    .locator('td')
+    .allTextContents()
+  const summaries = page.locator('.psum')
+  for (const [index, count] of brilliantCounts.entries()) {
+    const errors = summaries.nth(index).locator('.errs')
+    if (Number(count) > 0) await expect(errors).toContainText(`!! ${count}`)
+    else await expect(errors).not.toContainText('!!')
+    await expect(summaries.nth(index).locator('.brilliant-count')).toHaveCount(0)
+  }
 
   expect(problems).toEqual([])
+})
+
+test('shows the move label icon on the piece that moved', async ({ page }) => {
+  await page.goto('/')
+  await page.getByText('Paste a PGN instead').click()
+  await page.getByLabel('PGN').fill(OPERA)
+  await page.getByRole('button', { name: 'Review PGN' }).click()
+  await expect(page.locator('.review')).toBeVisible()
+
+  await page.locator('.mcell').filter({ hasText: 'e4' }).click()
+  const badge = page.locator('.board [data-square="e4"] .badge')
+  await expect(badge).toHaveText('📖', { timeout: 5000 })
+  await expect(badge).toHaveAttribute('title', 'Book')
+})
+
+test('toggles the best-move display from its checkbox and B shortcut', async ({ page }) => {
+  await page.goto('/')
+  await page.getByText('Paste a PGN instead').click()
+  await page.getByLabel('PGN').fill(LEGAL)
+  await page.getByRole('button', { name: 'Review PGN' }).click()
+  await expect(page.locator('.review')).toBeVisible()
+  await expect(page.locator('.psum').nth(0).locator('.errs')).toContainText('!! 1')
+  await expect(page.locator('.psum').nth(1).locator('.errs')).not.toContainText('!!')
+  await page.locator('.mcell').filter({ hasText: 'Bxd1' }).click()
+
+  const toggle = page.getByRole('checkbox', { name: 'Show best move' })
+  await expect(toggle).toBeChecked()
+  await expect(page.getByRole('button', { name: /Show .* instead/ })).toBeVisible()
+
+  await page.keyboard.press('b')
+  await expect(toggle).not.toBeChecked()
+  await expect(page.getByRole('button', { name: /Show .* instead/ })).toBeVisible()
+
+  await page.getByRole('button', { name: /Show .* instead/ }).click()
+  await expect(toggle).toBeChecked()
+  await expect(page.getByRole('button', { name: 'Back to the game' })).toBeVisible()
+
+  await toggle.uncheck()
+  await expect(page.getByRole('button', { name: /Show .* instead/ })).toBeVisible()
+
+  await toggle.focus()
+  await page.keyboard.press('b')
+  await expect(toggle).toBeChecked()
+})
+
+test('shows the current top engine move only when enabled in the game and Explore', async ({ page }) => {
+  await page.goto('/')
+  await page.getByText('Paste a PGN instead').click()
+  await page.getByLabel('PGN').fill(LEGAL)
+  await page.getByRole('button', { name: 'Review PGN' }).click()
+  await expect(page.locator('.review')).toBeVisible()
+
+  const toggle = page.getByRole('checkbox', { name: 'Show best move' })
+  const arrows = page.locator('.board svg path[marker-end]')
+  const bestMarker = page.locator('.board .best-move-badge')
+  await expect(toggle).toBeEnabled()
+  await expect(toggle).toBeChecked()
+  await expect(arrows).toHaveCount(1)
+  await expect(bestMarker).toHaveCount(0)
+
+  await toggle.uncheck()
+  await expect(arrows).toHaveCount(0)
+  await expect(bestMarker).toHaveCount(0)
+  await page.locator('.mcell').filter({ hasText: 'e4' }).click()
+  await expect(toggle).not.toBeChecked()
+  await expect(arrows).toHaveCount(0)
+  await expect(bestMarker).toHaveCount(0)
+
+  await page.getByRole('button', { name: 'Explore' }).click()
+  await expect(page.getByRole('heading', { name: 'Exploring' })).toBeVisible()
+  await expect(page.locator('.explore-eval b')).not.toHaveText('Thinking…')
+  await expect(arrows).toHaveCount(0)
+  await expect(bestMarker).toHaveCount(0)
+
+  await page.keyboard.press('b')
+  await expect(toggle).toBeChecked()
+  await expect(arrows).toHaveCount(1)
+  await expect(bestMarker).toHaveCount(0)
+})
+
+test('marks squares and draws arrows on the board', async ({ page }) => {
+  await page.goto('/')
+  await page.getByText('Paste a PGN instead').click()
+  await page.getByLabel('PGN').fill(LEGAL)
+  await page.getByRole('button', { name: 'Review PGN' }).click()
+  await expect(page.locator('.review')).toBeVisible()
+
+  await page.locator('[data-square="c3"]').click({ button: 'right' })
+  const mark = page.locator('[data-square="c3"] [data-mark="true"]')
+  await expect(mark).toBeVisible()
+  await expect(mark).toHaveCSS('background-color', 'rgba(200, 64, 60, 0.55)')
+  await page.locator('[data-square="c4"]').click({ button: 'right' })
+  const lightMark = page.locator('[data-square="c4"] [data-mark="true"]')
+  await expect(lightMark).toHaveCSS('background-color', 'rgba(200, 64, 60, 0.55)')
+  await page.getByRole('button', { name: 'Settings' }).click()
+  await page.getByRole('radio', { name: 'Brown' }).click()
+  await expect(mark).toHaveCSS('background-color', 'rgba(200, 64, 60, 0.55)')
+  await expect(lightMark).toHaveCSS('background-color', 'rgba(200, 64, 60, 0.55)')
+  await page.getByRole('button', { name: 'Close' }).click()
+  await page.locator('[data-square="c3"]').click({ button: 'right' })
+  await expect(mark).toHaveCount(0)
+  await page.locator('[data-square="c4"]').click({ button: 'right' })
+  await expect(lightMark).toHaveCount(0)
+
+  const from = await page.locator('[data-square="e2"]').boundingBox()
+  const to = await page.locator('[data-square="e4"]').boundingBox()
+  expect(from).not.toBeNull()
+  expect(to).not.toBeNull()
+  await page.mouse.move(from!.x + from!.width / 2, from!.y + from!.height / 2)
+  await page.mouse.down({ button: 'right' })
+  await page.mouse.move(to!.x + to!.width / 2, to!.y + to!.height / 2)
+  await page.mouse.up({ button: 'right' })
+  await expect(page.locator('.board svg path[marker-end*="e2-e4"]')).toHaveCount(1)
+
+  await page.getByRole('button', { name: 'Next move' }).click()
+  await expect(page.locator('.board svg path[marker-end*="e2-e4"]')).toHaveCount(0)
+})
+
+test('shows legal move capture markers and hover fills on the review board', async ({ page }) => {
+  await page.goto('/')
+  await page.getByText('Paste a PGN instead').click()
+  await page.getByLabel('PGN').fill(LEGAL)
+  await page.getByRole('button', { name: 'Review PGN' }).click()
+  await expect(page.locator('.review')).toBeVisible()
+
+  for (let i = 0; i < 8; i++) await page.getByRole('button', { name: 'Next move' }).click()
+
+  await page.locator('[data-square="f3"]').click()
+  const captureSquare = page.locator('[data-square="e5"]')
+  await expect(captureSquare.locator('.dot-capture')).toBeVisible({ timeout: 2000 })
+  await expect(captureSquare.locator('.dot-capture')).toHaveCSS('color', 'rgb(46, 139, 98)')
+  await expect(captureSquare.locator('.dot-target')).toHaveCount(0)
+  const quietTarget = page.locator('[data-square="g5"] .dot-target')
+  await expect(quietTarget).toBeVisible()
+  await expect(quietTarget).toHaveCSS('background-color', 'rgb(46, 139, 98)')
+
+  const target = await captureSquare.boundingBox()
+  expect(target).not.toBeNull()
+  await page.mouse.move(target!.x + target!.width / 2, target!.y + target!.height / 2)
+  await expect(captureSquare.locator('.dot-capture')).toHaveCount(0)
+  const fill = await captureSquare
+    .locator(':scope > div')
+    .evaluate((square) => getComputedStyle(square).backgroundColor)
+  expect(fill).toBe('rgba(46, 139, 98, 0.35)')
+})
+
+test('marks the checked king and puts a mate marker on checkmate', async ({ page }) => {
+  await page.goto('/')
+  await page.getByText('Paste a PGN instead').click()
+  await page.getByLabel('PGN').fill(LEGAL)
+  await page.getByRole('button', { name: 'Review PGN' }).click()
+  await expect(page.locator('.review')).toBeVisible()
+
+  const kingSquare = page.locator('.board [data-square="e8"]')
+  await page.locator('.mcell').filter({ hasText: 'Bxf7+' }).click()
+  const check = kingSquare.locator('[data-king-check="check"]')
+  await expect(check).toBeVisible()
+  const glow = await check.locator('[role="img"]').evaluate((king) => getComputedStyle(king).filter)
+  expect(glow).toContain('drop-shadow')
+
+  await page.locator('.mcell').filter({ hasText: 'Nd5#' }).click()
+  const mate = page.locator('.board [data-square="e7"] [data-king-check="mate"]')
+  await expect(mate).toBeVisible()
+  await expect(mate.locator('.checkmate-marker')).toHaveText('#')
 })
 
 test('explains a blunder with the tactic behind it, the best line, and the squares on the board', async ({
@@ -130,11 +319,16 @@ test('explores a line and free moves with a live engine, apart from the review',
 
   // From the start position, click a pawn and its square: the engine evaluates the new position.
   await page.keyboard.press('Home')
+  const bestMoveToggle = page.getByRole('checkbox', { name: 'Show best move' })
+  await expect(bestMoveToggle).toBeChecked()
+  await bestMoveToggle.uncheck()
   await page.locator('[data-square="d2"]').click()
   await page.locator('[data-square="d4"]').click()
   await expect(mine).toHaveText('1. d4')
   await expect(page.locator('.explore-eval b')).not.toHaveText('Thinking…')
   await expect(page.locator('.explore-eval b')).toHaveText(/^[+−]\d+\.\d$/)
+  await page.keyboard.press('ArrowLeft')
+  await expect(page.locator('.board svg path[marker-end]')).toHaveCount(0)
 
   // Leaving puts the game back exactly as it was.
   await page.getByRole('button', { name: 'Back to the game' }).click()
@@ -275,4 +469,45 @@ test('filters the game list by result and by whether it is reviewed', async ({ p
   await expect(page.locator('.gamerow')).toHaveCount(2)
   await filter(/^All/).click()
   await expect(page.locator('.gamerow')).toHaveCount(2)
+})
+
+test('filters account games by time control', async ({ page }) => {
+  const game = (timeClass: string, pgn: string, endTime: number) => ({
+    url: `https://www.chess.com/game/live/${endTime}`,
+    pgn,
+    rules: 'chess',
+    time_class: timeClass,
+    time_control: timeClass === 'bullet' ? '60' : timeClass === 'daily' ? '1/86400' : '600',
+    end_time: endTime,
+    white: { username: 'Morphy', rating: 2500, result: 'win' },
+    black: { username: 'Duke', rating: 1200, result: 'resigned' },
+  })
+  const games = [
+    game('rapid', OPERA, 1_790_000_500),
+    game('blitz', LEGAL, 1_790_000_400),
+    game('bullet', '1. d4 d5 *', 1_790_000_300),
+    game('daily', '1. e4 c5 *', 1_790_000_200),
+  ]
+  await page.route('https://api.chess.com/**', (route) =>
+    route.request().url().endsWith('/games/archives')
+      ? json(route, { archives: ['https://api.chess.com/pub/player/morphy/games/2026/09'] })
+      : json(route, { games }),
+  )
+
+  await page.goto('/')
+  await page.getByLabel('chess.com username').fill('morphy')
+  await page.getByRole('button', { name: 'Load games' }).click()
+  await expect(page.locator('.gamerow')).toHaveCount(4)
+
+  const timeControl = page.getByLabel('Time control')
+  await expect(timeControl.locator('option')).toHaveText(['All', 'Blitz', 'Bullet', 'Daily', 'Rapid'])
+  await timeControl.selectOption('bullet')
+  await expect(page.locator('.gamerow')).toHaveCount(1)
+  await expect(page.locator('.gamerow')).toContainText('1 min')
+
+  await timeControl.selectOption('daily')
+  await expect(page.locator('.gamerow')).toHaveCount(1)
+  await expect(page.locator('.gamerow')).toContainText('Daily')
+  await timeControl.selectOption('all')
+  await expect(page.locator('.gamerow')).toHaveCount(4)
 })

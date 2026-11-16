@@ -20,7 +20,7 @@ const START = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1'
  * blunder whose best move d4 beats every other move by a wide margin. `altCp` sets how well the
  * best other move does when searched without d4.
  */
-function engine(altCp: number, calls: AnalyseRequest[] = []): Engine {
+function engine(altCp: number, calls: AnalyseRequest[] = [], startBest = 'd2d4'): Engine {
   return {
     async analyse(req) {
       calls.push(req)
@@ -31,13 +31,13 @@ function engine(altCp: number, calls: AnalyseRequest[] = []): Engine {
       }
       return req.searchMoves
         ? { eval: { cp: altCp, mate: null }, best: req.searchMoves[0]!, pv: [], depth: 1, nodes: 1 }
-        : { eval: { cp: 300, mate: null }, best: 'd2d4', pv: ['d2d4', 'd7d5'], depth: 1, nodes: 1 }
+        : { eval: { cp: 300, mate: null }, best: startBest, pv: [startBest, 'd7d5'], depth: 1, nodes: 1 }
     },
   }
 }
 
-async function setup(store: ReviewStore = memoryStore()) {
-  const review = await reviewGame(PGN, engine(-100), emptyBook, settingsFor('quick', 'fake'))
+async function setup(store: ReviewStore = memoryStore(), reviewEngine: Engine = engine(-100)) {
+  const review = await reviewGame(PGN, reviewEngine, emptyBook, settingsFor('quick', 'fake'))
   expect(review.schemaVersion).toBe(ANALYSIS_VERSION)
   await store.putReview({ id: 'game', pgn: PGN, review, summary: summarize(review), createdAt: 1 })
   return store
@@ -54,6 +54,56 @@ describe('PuzzleService', () => {
     expect(r).toMatchObject({ gameId: 'game', opponent: 'Bob', player: 'ann' })
     expect(r!.puzzle).toMatchObject({ solution: 'd2d4', playedUci: 'e2e4', fen: START })
     expect(await s.list('Bob')).toEqual([])
+  })
+
+  it('reports newly found puzzles in progress as soon as they are saved', async () => {
+    const store = await setup()
+    const s = service(store, engine(-100))
+    const found: PuzzleRecord[] = []
+    const saved = new Set<string>()
+    const put = store.putPuzzles.bind(store)
+    store.putPuzzles = async (records) => {
+      await put(records)
+      for (const record of records) saved.add(record.id)
+    }
+    const savedWhenReported: boolean[] = []
+    await s.sync('Ann', (p) => {
+      if (p.record) {
+        found.push(p.record)
+        savedWhenReported.push(saved.has(p.record.id))
+      }
+    })
+    expect(found).toHaveLength(1)
+    expect(found[0]!.puzzle).not.toBeNull()
+    expect(savedWhenReported).toEqual([true])
+    expect((await store.allPuzzles()).map((r) => r.id)).toContain(found[0]!.id)
+  })
+
+  it('does not create a puzzle when the player found the best move', async () => {
+    const hitEngine = engine(-100, [], 'e2e4')
+    const store = await setup(memoryStore(), hitEngine)
+    const s = service(store, hitEngine)
+    await s.sync('Ann')
+    expect(await store.allPuzzles()).toEqual([])
+  })
+
+  it('fills opening-miss metadata onto older saved puzzles', async () => {
+    const store = await setup()
+    const s = service(store, engine(-100))
+    await s.sync('Ann')
+    const [record] = await s.list('Ann')
+    const legacy = { ...record!, puzzle: { ...record!.puzzle! } }
+    Reflect.deleteProperty(legacy.puzzle, 'cpLoss')
+    Reflect.deleteProperty(legacy.puzzle, 'gambit')
+    await store.putPuzzles([legacy])
+    const stored = (await store.getReview('game'))!
+    await store.putReview({ ...stored, review: { ...stored.review, opening: "King's Gambit" } })
+
+    const [updated] = await s.list('Ann')
+    expect(updated!.puzzle).toMatchObject({
+      cpLoss: stored.review.moves[record!.puzzle!.moveIndex]!.cpLoss,
+      gambit: true,
+    })
   })
 
   it('searches a position once: a second sync does no work', async () => {

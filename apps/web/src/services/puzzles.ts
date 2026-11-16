@@ -11,6 +11,7 @@ import {
   sideOf,
   verifyPuzzle,
   type Engine,
+  type Puzzle,
   type PuzzleCandidate,
   type PuzzlePerspective,
   type PuzzleLimits,
@@ -20,11 +21,11 @@ import type { ReviewStore } from './storage'
 
 /** How hard each candidate is searched to prove its best move is the only good one. */
 export const PUZZLE_LIMITS: PuzzleLimits = { depth: 18, nodes: 3_000_000 }
-/** Results are saved this often, so closing the tab midway keeps what was done. */
-const SAVE_EVERY = 4
-
 /** A puzzle with a tactic whose side was not kept when it was made. */
 const needsSide = (r: PuzzleRecord) => r.tactic !== null && r.perspective === undefined
+const needsMetadata = (r: PuzzleRecord) =>
+  r.puzzle !== null && (typeof r.puzzle.cpLoss !== 'number' || typeof r.puzzle.gambit !== 'boolean')
+const needsBackfill = (r: PuzzleRecord) => needsSide(r) || needsMetadata(r)
 
 export interface PuzzleDeps {
   store: ReviewStore
@@ -37,6 +38,8 @@ export interface PuzzleDeps {
 export interface SyncProgress {
   done: number
   total: number
+  /** A verified puzzle, reported only after it has been saved. */
+  record?: PuzzleRecord
 }
 
 /** Makes puzzles from the stored reviews of one player, and keeps how they were answered. */
@@ -58,30 +61,29 @@ export class PuzzleService {
 
   async list(player: string): Promise<PuzzleRecord[]> {
     const records = await this.all(player)
-    const todo = records.filter(needsSide)
+    const todo = records.filter(needsBackfill)
     if (todo.length === 0) return records
     try {
       await this.backfill(todo)
     } catch (e) {
       // Only the focus on a side is affected, so the puzzles still load.
-      console.warn('Could not work out which side of its tactic each puzzle was on', e)
+      console.warn('Could not backfill details for puzzles from their games', e)
       return records
     }
     return this.all(player)
   }
 
   /**
-   * Puzzles made before the side of the tactic was kept get it from their game's review. When the review
-   * is gone the side stays unset, so it can be worked out if the game is reviewed again; when the review no
-   * longer shows that tactic, it is recorded as unknown so this is not tried again. A game whose review
-   * cannot be read is skipped and the rest are still filled in.
+   * Puzzles made before tactic sides and opening-loss details were kept get them from their game's review.
+   * A game whose review cannot be read is skipped and the rest are still filled in.
    */
   private async backfill(todo: readonly PuzzleRecord[]): Promise<void> {
     const sides = new Map<string, PuzzlePerspective | null>()
+    const metadata = new Map<string, { cpLoss: number; gambit: boolean }>()
     const byGame = new Map<string, PuzzleRecord[]>()
     for (const r of todo) {
       if (!r.puzzle) {
-        sides.set(r.id, null) // its position was not kept as a puzzle, so there is nothing to look up
+        if (needsSide(r)) sides.set(r.id, null) // its position was not kept as a puzzle
         continue
       }
       byGame.set(r.gameId, [...(byGame.get(r.gameId) ?? []), r])
@@ -93,21 +95,33 @@ export class PuzzleService {
           const stored = await this.deps.store.getReview(gameId)
           if (!stored) return
           for (const r of records) {
-            const found = puzzleTactic(explainReviewMove(stored.review, r.puzzle!.moveIndex))
-            sides.set(r.id, found.tactic === r.tactic ? found.perspective : null)
+            const move = stored.review.moves[r.puzzle!.moveIndex]
+            if (needsSide(r)) {
+              const found = puzzleTactic(explainReviewMove(stored.review, r.puzzle!.moveIndex))
+              sides.set(r.id, found.tactic === r.tactic ? found.perspective : null)
+            }
+            if (move)
+              metadata.set(r.id, { cpLoss: move.cpLoss, gambit: /gambit\b/i.test(stored.review.opening) })
           }
         } catch (e) {
-          console.warn(`Could not work out the side of the puzzles from game ${gameId}`, e)
+          console.warn(`Could not backfill puzzle details from game ${gameId}`, e)
         }
       }),
     )
     // Written onto the records as they are now, so an answer given while the reviews were read is kept.
-    const current = (await this.deps.store.allPuzzles()).filter((r) => needsSide(r) && sides.has(r.id))
+    const ids = new Set(todo.map((r) => r.id))
+    const current = (await this.deps.store.allPuzzles()).filter((r) => ids.has(r.id))
     if (current.length > 0)
-      await this.deps.store.putPuzzles(current.map((r) => ({ ...r, perspective: sides.get(r.id) ?? null })))
+      await this.deps.store.putPuzzles(
+        current.map((r) => ({
+          ...r,
+          ...(sides.has(r.id) ? { perspective: sides.get(r.id) ?? null } : {}),
+          ...(r.puzzle && metadata.has(r.id) ? { puzzle: { ...r.puzzle, ...metadata.get(r.id)! } } : {}),
+        })),
+      )
   }
 
-  /** Mistakes in the player's reviewed games that have not been checked yet. */
+  /** Moves in the player's reviewed games that have not been checked yet. */
   async pending(player: string): Promise<{ record: PuzzleRecord; candidate: PuzzleCandidate }[]> {
     const mine = player.toLowerCase()
     const known = new Set((await this.all(player)).map((r) => r.id))
@@ -144,6 +158,7 @@ export class PuzzleService {
           date: f.date,
           tactic: f.tactic,
           perspective: f.perspective,
+          kind: 'miss',
           checkedWith: this.limits,
           puzzle: null,
           progress: freshProgress(),
@@ -153,7 +168,7 @@ export class PuzzleService {
   }
 
   /**
-   * Checks every new mistake of the player and saves the result, puzzle or not, so a position is
+   * Checks every new candidate of the player and saves the result, puzzle or not, so a position is
    * searched once. Stops quietly when cancelled, keeping what is done.
    */
   async sync(
@@ -165,34 +180,24 @@ export class PuzzleService {
     const total = todo.length
     if (total === 0) return
     let done = 0
-    let unsaved: PuzzleRecord[] = []
-    const flush = async () => {
-      const batch = unsaved
-      unsaved = []
-      if (batch.length > 0) await this.deps.store.putPuzzles(batch)
-    }
     onProgress({ done, total })
-    try {
-      await this.deps.engine((engine) =>
-        Promise.all(
-          todo.map(async ({ record, candidate }) => {
-            if (signal?.aborted) return
-            let puzzle
-            try {
-              puzzle = await verifyPuzzle(candidate, engine, this.limits, signal)
-            } catch (e) {
-              if (e instanceof AnalysisAborted || signal?.aborted) return
-              throw e
-            }
-            unsaved.push({ ...record, puzzle })
-            onProgress({ done: ++done, total })
-            if (unsaved.length >= SAVE_EVERY) await flush()
-          }),
-        ),
-      )
-    } finally {
-      await flush()
-    }
+    await this.deps.engine((engine) =>
+      Promise.all(
+        todo.map(async ({ record, candidate }) => {
+          if (signal?.aborted) return
+          let puzzle: Puzzle | null
+          try {
+            puzzle = await verifyPuzzle(candidate, engine, this.limits, signal)
+          } catch (e) {
+            if (e instanceof AnalysisAborted || signal?.aborted) return
+            throw e
+          }
+          const checked: PuzzleRecord = { ...record, puzzle }
+          await this.deps.store.putPuzzles([checked])
+          onProgress({ done: ++done, total, ...(puzzle ? { record: checked } : {}) })
+        }),
+      ),
+    )
   }
 
   /** Records an answer and returns the updated record. */

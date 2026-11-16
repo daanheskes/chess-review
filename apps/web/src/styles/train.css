@@ -1,4 +1,7 @@
 /* ---------- train: puzzles from your own mistakes ---------- */
+.train-tabs {
+  margin-top: var(--s-4);
+}
 .train-stage {
   margin-top: var(--s-5);
 }
@@ -7,6 +10,7 @@
   flex-direction: column;
   gap: var(--s-5);
   align-content: start;
+  min-width: 0;
   padding-top: 4px;
 }
 .train-panel h2 {
@@ -59,6 +63,22 @@
   margin: 0 0 var(--s-2);
   font-size: 1.0625rem;
 }
+.wrong-move-marker {
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  z-index: 5;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 50%;
+  background: #c8403c;
+  color: #fff;
+  font: 700 15px / 1 var(--font-display);
+  box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: none;
+}
 .train-error {
   color: var(--t-blunder);
 }
@@ -96,8 +116,50 @@
   background: color-mix(in srgb, var(--signal) 88%, var(--ink));
 }
 .train-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s-2);
   margin: 0;
   font-family: var(--font-mono);
+}
+.train-line .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-1) var(--s-2);
+  min-width: 0;
+}
+.train-line .chips > span {
+  display: inline-flex;
+}
+.train-line .chip {
+  cursor: pointer;
+  white-space: nowrap;
+}
+.train-live {
+  min-width: 0;
+}
+.train-analysis-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.train-live .bestline {
+  flex-wrap: wrap;
+}
+.train-live .chips {
+  display: flex;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.train-live .chips > span {
+  display: inline-flex;
+}
+.train-board-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+.train-board-row.has-evaluation {
+  grid-template-columns: 26px minmax(0, 1fr);
 }
 .train-actions {
   display: flex;
@@ -112,6 +174,31 @@
   display: grid;
   gap: var(--s-5);
   margin-top: var(--s-7);
+}
+.train-completed {
+  max-width: 760px;
+  margin-top: var(--s-5);
+}
+.train-completed ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.train-completed li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-4);
+  padding: var(--s-4) 0;
+  border-top: 1px solid var(--line);
+}
+.train-completed li > div {
+  display: grid;
+  gap: var(--s-1);
+}
+.train-completed p {
+  margin: 0;
 }
 .train-tiles {
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -156,6 +243,17 @@
   .train-tiles .tile + .tile {
     padding: var(--s-5) var(--s-4) var(--s-5) 0;
     border-left: 0;
+  }
+}
+@media (max-width: 520px) {
+  .train-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 var(--s-4);
+  }
+  .train-tabs .tab {
+    min-width: 0;
+    text-align: center;
   }
 }
 

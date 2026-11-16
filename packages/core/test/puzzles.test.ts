@@ -34,8 +34,8 @@ function move(over: Partial<MoveReview>): MoveReview {
   }
 }
 
-function review(moves: MoveReview[], fens: string[]): Review {
-  return { moves, fens, lines: fens.map(() => ['e2e4', 'e7e5']) } as unknown as Review
+function review(moves: MoveReview[], fens: string[], opening = ''): Review {
+  return { moves, fens, lines: fens.map(() => ['e2e4', 'e7e5']), opening } as unknown as Review
 }
 
 describe('puzzleCandidates', () => {
@@ -56,17 +56,26 @@ describe('puzzleCandidates', () => {
   it('skips small losses and moves that are not mistakes', () => {
     const r = review(
       [
-        move({ loss: 12, label: 'Mistake' }),
-        move({ label: 'Good', loss: 25 }),
-        move({ label: 'Inaccuracy' }),
+        move({ loss: 12, label: 'Mistake', cpLoss: 80 }),
+        move({ label: 'Good', loss: 25, cpLoss: 80 }),
+        move({ label: 'Inaccuracy', cpLoss: 80 }),
       ],
       [START, START, START],
     )
     expect(puzzleCandidates(r, 'white')).toEqual([])
   })
 
+  it('includes opening losses over 1.00 even below the usual miss thresholds, but not gambits', () => {
+    const position = move({ label: 'Good', loss: 5, cpLoss: 101, winBefore: 95 })
+    expect(puzzleCandidates(review([position], [START]), 'white')).toHaveLength(1)
+    expect(puzzleCandidates(review([position], [START], "Queen's Gambit"), 'white')).toEqual([])
+  })
+
   it('skips positions that were already lost or already easily won', () => {
-    const r = review([move({ winBefore: 10 }), move({ winBefore: 96 })], [START, START])
+    const r = review(
+      [move({ winBefore: 10, cpLoss: 100 }), move({ winBefore: 96, cpLoss: 100 })],
+      [START, START],
+    )
     expect(puzzleCandidates(r, 'white')).toEqual([])
   })
 
@@ -78,6 +87,14 @@ describe('puzzleCandidates', () => {
   it('carries the line only when it starts with the best move', () => {
     const r = review([move({ bestUci: 'd2d4' })], [START])
     expect(puzzleCandidates(r, 'white')[0]!.line).toEqual(['d2d4'])
+  })
+
+  it('carries centipawn loss and known gambit information for opening-miss filters', () => {
+    const [candidate] = puzzleCandidates(
+      review([move({ phase: 'opening', cpLoss: 125 })], [START], "Queen's Gambit"),
+      'white',
+    )
+    expect(candidate).toMatchObject({ cpLoss: 125, phase: 'opening', gambit: true })
   })
 })
 

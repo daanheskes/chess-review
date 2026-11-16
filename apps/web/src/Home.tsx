@@ -42,13 +42,18 @@ const SITE: Record<Source, string> = { chesscom: 'chess.com', lichess: 'Lichess'
 
 type Filter = 'all' | 'reviewed' | 'new' | 'won' | 'lost'
 
+function timeControlLabel(timeControl: string): string {
+  const words = timeControl.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/[-_]/g, ' ')
+  return words.charAt(0).toUpperCase() + words.slice(1)
+}
+
 interface Row {
   game: RemoteGame
   id: string
   summary: Summary | null
 }
 
-function timeControl(tc: string): string {
+function formatTimeControl(tc: string): string {
   if (tc.includes('/')) return 'Daily'
   const [base = 0, inc] = tc.split('+').map(Number)
   const mins = base / 60
@@ -268,26 +273,32 @@ export function Home() {
   const [pgn, setPgn] = useState('')
   const [showAll, setShowAll] = useState(false)
   const [filter, setFilter] = useState<Filter>('all')
+  const [timeControl, setTimeControl] = useState('all')
 
-  // Re-runs when the source, user, month, preset or engine changes (the preset and engine decide which
-  // games count as reviewed), and when a review finishes, so finished games show as reviewed.
-  const games = useAsync(
-    query
-      ? `${query.source}|${query.user}|${query.month ?? ''}|${query.count ?? ''}|${query.refresh ?? ''}|${preset}|${engineId}|${queue.completed}`
-      : null,
-    () => loadGames(query!, preset, engineId),
-  )
+  // Remote games are fetched only when the search inputs change. Review completion updates summaries
+  // separately from IndexedDB below, so it never reloads the remote game list.
+  const gamesKey = query
+    ? `${query.source}|${query.user}|${query.month ?? ''}|${query.count ?? ''}|${query.refresh ?? ''}|${preset}|${engineId}`
+    : null
+  const games = useAsync(gamesKey, () => loadGames(query!, preset, engineId))
   const data = games.value
+  const ids = data?.rows.map((r) => r.id) ?? []
+  const summaryKey =
+    gamesKey === null || data === undefined || queue.completed === 0
+      ? null
+      : `${gamesKey}|summaries|${queue.completed}|${JSON.stringify(ids)}`
+  const summaries = useAsync(summaryKey, async () => (await getReviewService()).summaries(ids))
+  const rows = data?.rows.map((r) => ({ ...r, summary: summaries.value?.get(r.id) ?? r.summary })) ?? null
   const busy = games.loading || opening
   const error = games.error ? messageOf(games.error) : openError
   const loaded = data?.user ?? ''
   const months = data?.months ?? []
   const month = data?.month ?? null
-  const rows = data?.rows ?? null
 
   function search(user: string, wanted?: string) {
     setOpenError('')
     setShowAll(false)
+    setTimeControl('all')
     setQuery({ source, user, month: wanted, refresh: Date.now() })
     write(STORE, user)
     write(SOURCE, source)
@@ -327,6 +338,9 @@ export function Home() {
   }
 
   const everything = (rows ?? []).map((r) => ({ ...r, o: outcome(r.game, loaded) }))
+  const timeControls = [...new Set(everything.map((r) => r.game.timeClass))].sort((a, b) =>
+    a.localeCompare(b),
+  )
   const fresh = everything.filter((r) => !r.summary && !queued.has(r.id)).map((r) => r.game.pgn)
   const tally = (tone: string) => everything.filter((r) => r.o.tone === tone).length
   const hasSide = everything.some((r) => r.o.side)
@@ -346,7 +360,8 @@ export function Home() {
       (filter === 'won' && r.o.tone === 'won') ||
       (filter === 'lost' && r.o.tone === 'lost'),
   )
-  const shown = view.slice(0, showAll ? undefined : PAGE)
+  const filtered = view.filter((r) => timeControl === 'all' || r.game.timeClass === timeControl)
+  const shown = filtered.slice(0, showAll ? undefined : PAGE)
   const days: Array<{ key: string; label: string; rows: typeof shown }> = []
   for (const r of shown) {
     const key = dayKey(r.game.endTime)
@@ -439,6 +454,21 @@ export function Home() {
                     ))}
                   </select>
                 )}
+                <select
+                  aria-label="Time control"
+                  value={timeControl}
+                  onChange={(e) => {
+                    setTimeControl(e.target.value)
+                    setShowAll(false)
+                  }}
+                >
+                  <option value="all">All</option>
+                  {timeControls.map((timeControlOption) => (
+                    <option key={timeControlOption} value={timeControlOption}>
+                      {timeControlLabel(timeControlOption)}
+                    </option>
+                  ))}
+                </select>
                 {fresh.length > 0 && (
                   <button className="cta reviewall" disabled={busy} onClick={() => void reviewAll(fresh)}>
                     Review all {fresh.length} new game{fresh.length === 1 ? '' : 's'}
@@ -447,7 +477,7 @@ export function Home() {
               </div>
             </div>
 
-            {view.length === 0 && (
+            {filtered.length === 0 && (
               <p className="muted empty-note">
                 {everything.length === 0
                   ? 'No games this month. Try an earlier one.'
@@ -490,7 +520,7 @@ export function Home() {
                                 {o.side ? opp : `${g.white} vs ${g.black}`}
                                 {o.side && oppRating ? <em>{oppRating}</em> : null}
                               </span>
-                              <span className="g-meta">{timeControl(g.timeControl)}</span>
+                              <span className="g-meta">{formatTimeControl(g.timeControl)}</span>
                             </span>
                           </span>
                           <span className="g-acc" title="Your accuracy">
@@ -513,9 +543,9 @@ export function Home() {
               </div>
             ))}
 
-            {!showAll && view.length > PAGE && (
+            {!showAll && filtered.length > PAGE && (
               <button className="ghost more" onClick={() => setShowAll(true)}>
-                Show all {view.length} games
+                Show all {filtered.length} games
               </button>
             )}
             {query?.source === 'lichess' && view.length >= (query.count ?? 30) && (
