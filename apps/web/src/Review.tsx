@@ -91,7 +91,19 @@ export function ReviewPage({ id, me }: { id: string; me: string | null }) {
   )
 }
 
-function ReviewView({ id, review, me }: { id: string; review: Review; me: string | null }) {
+export function ReviewView({
+  id,
+  review,
+  me,
+  initialPly = 0,
+  embedded = false,
+}: {
+  id: string
+  review: Review
+  me: string | null
+  initialPly?: number
+  embedded?: boolean
+}) {
   const mySide: Side | null = !me
     ? null
     : review.white.toLowerCase() === me.toLowerCase()
@@ -100,7 +112,7 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
         ? 'black'
         : null
 
-  const [ply, setPly] = useState(0)
+  const [ply, setPly] = useState(() => Math.min(Math.max(initialPly, 0), Math.max(0, review.fens.length - 1)))
   const [flipped, setFlipped] = useState(mySide === 'black')
   const [showBest, setShowBest] = useState(true)
   const [showBestAlternative, setShowBestAlternative] = useState(false)
@@ -174,8 +186,8 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
   const nextKey = keyPlies.find((p) => p > ply)
 
   useEffect(() => {
-    document.title = `${review.white} vs ${review.black} · chessreview`
-  }, [review])
+    if (!embedded) document.title = `${review.white} vs ${review.black} · chessreview`
+  }, [embedded, review])
 
   useEffect(() => {
     const on = (e: KeyboardEvent) => {
@@ -278,10 +290,12 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
   }
   const when = h.Date && !h.Date.includes('?') ? h.Date.replaceAll('.', '-') : ''
 
+  const ReviewContainer = embedded ? 'div' : 'main'
+
   return (
     <>
-      <AppHeader active="games" />
-      <main className="review page">
+      {!embedded && <AppHeader active="games" />}
+      <ReviewContainer className={embedded ? 'review embedded-review' : 'review page'}>
         <div className="title">
           <h1>
             {review.white} vs {review.black}
@@ -598,7 +612,7 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
           </header>
           <EvalGraph review={review} ply={ply} onSelect={goto} />
         </section>
-      </main>
+      </ReviewContainer>
     </>
   )
 }

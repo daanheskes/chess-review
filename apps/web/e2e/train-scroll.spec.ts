@@ -31,6 +31,11 @@ const PUZZLE = {
   progress: { box: 0, due: 0, attempts: 0, solved: 0, lastAt: null },
 }
 
+const COMPLETED_PUZZLE = {
+  ...PUZZLE,
+  progress: { box: 1, due: Date.now() + 86_400_000, attempts: 1, solved: 1, lastAt: Date.now() },
+}
+
 async function importGame(page: Page) {
   await page.goto('/')
   await page.getByText('Paste a PGN instead').click()
@@ -39,7 +44,7 @@ async function importGame(page: Page) {
   await expect(page.locator('.review')).toBeVisible()
 }
 
-async function withPuzzle(page: Page) {
+async function withPuzzle(page: Page, record: typeof PUZZLE | typeof COMPLETED_PUZZLE = PUZZLE) {
   await importGame(page)
   await page.evaluate(
     (record) =>
@@ -53,7 +58,7 @@ async function withPuzzle(page: Page) {
           tx.onerror = () => reject(tx.error ?? new Error('could not save the puzzle'))
         }
       }),
-    PUZZLE,
+    record,
   )
 }
 
@@ -92,6 +97,11 @@ test('places accuracy after game details and before the rest on narrow reviews',
 test('keeps analysis navigation icon-only and does not scroll when solving', async ({ page }) => {
   await withPuzzle(page)
   await page.goto('/#/train')
+  await expect(page.getByRole('tab', { name: 'New puzzles' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByRole('tab', { name: 'Puzzle category' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Misses' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Positional mistakes' })).toHaveCount(0)
+  await expect(page.getByRole('tab', { name: 'Opening misses' })).toHaveCount(0)
   await page.getByLabel('Your move').fill('Qxf7#')
   const scrollBefore = await page.evaluate(() => window.scrollY)
 
@@ -114,6 +124,58 @@ test('keeps analysis navigation icon-only and does not scroll when solving', asy
   await expect(navigation.getByRole('button', { name: 'End' })).toBeHidden()
   await expect(navigation.getByRole('button', { name: 'Previous move' })).toBeVisible()
   await expect(navigation.getByRole('button', { name: 'Next move' })).toBeVisible()
+})
+
+test('opens a completed puzzle so it can be solved again', async ({ page }) => {
+  await withPuzzle(page, COMPLETED_PUZZLE)
+  await page.goto('/#/train')
+
+  const completed = page.getByRole('tab', { name: 'Completed puzzles' })
+  await expect(page.getByRole('tab', { name: 'New puzzles' })).toHaveAttribute('aria-selected', 'true')
+  await completed.click()
+  await expect(completed).toHaveAttribute('aria-selected', 'true')
+
+  const redo = page.getByRole('button', { name: 'Redo puzzle: Qxf7# against Saint Brie' })
+  await expect(redo).toBeVisible()
+  await redo.click()
+  await page.getByLabel('Your move').fill('Qxf7#')
+  await page.getByRole('button', { name: 'Check' }).click()
+  await expect(page.getByRole('heading', { name: 'Correct' })).toBeVisible()
+  await page.getByRole('button', { name: 'Back to completed list' }).click()
+  await expect(page.locator('.completed-puzzle-progress')).toContainText('2 correct of 2 attempts')
+})
+
+test('Practice opens recent mistakes and navigates each position once', async ({ page }) => {
+  await importGame(page)
+  await page.goto('/#/insights')
+  await page.getByLabel('Player').selectOption('Saint Brie')
+  await expect(page.getByRole('heading', { name: 'What your mistakes had in common' })).toBeVisible()
+
+  const practice = page.getByRole('link', { name: /Practice/ }).first()
+  await expect(practice).toHaveAttribute('href', /tab=mistakes/)
+  await practice.click()
+  await expect(page.getByRole('tab', { name: 'Mistakes' })).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText('1 of 1', { exact: true })).toBeVisible()
+  await expect(page.locator('.mistake-queue')).toContainText('Bxd1')
+
+  await page.goto('/#/train?tab=mistakes&u=Saint%20Brie')
+  await expect(page.getByText('1 of 2', { exact: true })).toBeVisible()
+  const board = page.locator('.embedded-review .board')
+  const newestPosition = await board.getAttribute('aria-label')
+  const navigation = page.getByRole('navigation', { name: 'Mistake position navigation' })
+  const next = navigation.getByRole('button', { name: 'Next position' })
+  await expect(next).toBeEnabled()
+  await next.click()
+  await expect(page.getByText('2 of 2', { exact: true })).toBeVisible()
+  await expect(page.locator('.mistake-queue')).toContainText('g6')
+  await expect(next).toBeDisabled()
+  await expect(board).not.toHaveAttribute('aria-label', newestPosition!)
+  await expect(navigation.getByRole('button', { name: 'Previous position' })).toBeEnabled()
+
+  await page.getByRole('button', { name: 'g6, Mistake' }).click()
+  await page.getByRole('list', { name: 'Best line' }).getByRole('button').first().click()
+  await expect(page.getByRole('heading', { name: 'Exploring' })).toBeVisible()
+  await expect(page.locator('.explore-eval')).toContainText(/depth \d+/, { timeout: 30_000 })
 })
 
 test('keeps review controls compact on mobile and offers a way back from exploration', async ({ page }) => {

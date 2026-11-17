@@ -8,7 +8,6 @@ import {
   checkStatus,
   winPercent,
   type Phase,
-  type PuzzlePool,
   type PuzzlePerspective,
   type PuzzleRecord,
   withPool,
@@ -20,12 +19,13 @@ import { explore, fenOf, lineMoves, play, stepTo, targets, type Exploration } fr
 import { useAsync, useLiveEval } from './hooks'
 import { IconButton } from './icons'
 import { evalText } from './labels'
-import { tacticName, tacticTopic } from './insight-facts'
+import { mistakePositionsFor, tacticName, tacticTopic } from './insight-facts'
 import { LEGAL_MOVE_HOVER_COLOR, LegalMoveMarker, SQUARE_MARK_COLOR } from './LegalMoveMarker'
 import { NAMED_PIECES, isLight, reducedMotion } from './pieces'
 import { BOARDS, rememberedPlayer, usePrefs } from './prefs'
 import { moveFromText } from './puzzle-input'
-import { getPuzzleService, getReviewService, type SyncProgress } from './services'
+import { ReviewView } from './Review'
+import { getPuzzleService, getReviewService, type StoredReview, type SyncProgress } from './services'
 
 const PHASE_NAMES: Record<Phase, string> = {
   opening: 'Opening',
@@ -35,23 +35,31 @@ const PHASE_NAMES: Record<Phase, string> = {
 const COLOR_NAMES = { w: 'White', b: 'Black' }
 const ARROW = 'rgba(76,127,214,0.85)'
 const BEST_ARROW = '#2E8B62'
-const PUZZLE_POOLS = [
-  { id: 'miss', label: 'Misses' },
-  { id: 'positional', label: 'Positional mistakes' },
-  { id: 'opening-miss', label: 'Opening misses' },
-  { id: 'completed', label: 'Completed puzzles' },
-] as const
 /** How many puzzles make up a day's set. Soft: the player can carry on past it. */
 const DAILY_GOAL = 10
 
 const startOfDay = (t: number) => new Date(t).setHours(0, 0, 0, 0)
 
+function navigateTrainView(view: 'puzzles' | 'mistakes') {
+  const params = new URLSearchParams(location.hash.split('?')[1] ?? '')
+  if (view === 'mistakes') params.set('tab', 'mistakes')
+  else {
+    params.delete('tab')
+    params.delete('tactic')
+    params.delete('p')
+  }
+  const query = params.toString()
+  location.hash = `#/train${query ? `?${query}` : ''}`
+}
+
 /** Puzzles from the player's own games; answered puzzles are kept in Completed. */
 export function TrainPage({
+  tab,
   tactic,
   perspective,
   player: asked,
 }: {
+  tab: 'puzzles' | 'mistakes'
   tactic: string | null
   perspective: PuzzlePerspective | null
   player: string | null
@@ -59,7 +67,6 @@ export function TrainPage({
   const stored = useAsync('all', async () => (await getReviewService()).allReviews())
   const players = useMemo(() => playersIn((stored.value ?? []).map((s) => s.review)), [stored.value])
   const [chosen, setChosen] = useState<string | null>(null)
-  const [pool, setPool] = useState<PuzzlePool>('miss')
   const named = (name: string | null) => players.find((p) => p.name.toLowerCase() === name?.toLowerCase())
   const player = chosen ?? named(asked)?.name ?? named(rememberedPlayer())?.name ?? players[0]?.name ?? null
 
@@ -86,39 +93,43 @@ export function TrainPage({
             </label>
           )}
         </div>
-        <div className="tabs train-tabs" role="tablist" aria-label="Puzzle category">
-          {PUZZLE_POOLS.map((tab, i) => (
+        <div className="tabs train-tabs train-view-tabs" role="tablist" aria-label="Training type">
+          {(['puzzles', 'mistakes'] as const).map((view) => (
             <button
-              key={tab.id}
-              id={`train-tab-${tab.id}`}
+              key={view}
+              id={`train-view-tab-${view}`}
               type="button"
               role="tab"
-              aria-selected={pool === tab.id}
-              aria-controls="train-pool-panel"
-              tabIndex={pool === tab.id ? 0 : -1}
+              aria-selected={tab === view}
+              aria-controls={`train-view-panel-${view}`}
+              tabIndex={tab === view ? 0 : -1}
               className="tab"
-              onClick={() => setPool(tab.id)}
+              onClick={() => navigateTrainView(view)}
               onKeyDown={(e) => {
                 if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+                e.preventDefault()
                 e.stopPropagation()
-                const next =
-                  PUZZLE_POOLS[
-                    (i + (e.key === 'ArrowRight' ? 1 : -1) + PUZZLE_POOLS.length) % PUZZLE_POOLS.length
-                  ]!
-                setPool(next.id)
-                document.getElementById(`train-tab-${next.id}`)?.focus()
+                const next = view === 'puzzles' ? 'mistakes' : 'puzzles'
+                document.getElementById(`train-view-tab-${next}`)?.focus()
+                if (next !== tab) navigateTrainView(next)
               }}
             >
-              {tab.label}
+              {view === 'puzzles' ? 'Puzzles' : 'Mistakes'}
             </button>
           ))}
         </div>
-        <div id="train-pool-panel" role="tabpanel" aria-labelledby={`train-tab-${pool}`} tabIndex={0}>
+        <div
+          id="train-view-panel-puzzles"
+          role="tabpanel"
+          aria-labelledby="train-view-tab-puzzles"
+          tabIndex={0}
+          hidden={tab !== 'puzzles'}
+        >
           {stored.loading ? (
             <p className="muted">Reading your reviews…</p>
           ) : player === null ? (
             <div className="empty">
-              <p>Puzzles come from your own games, so there is nothing to practise yet.</p>
+              <p>Puzzles come from your own games, so there is nothing to practice yet.</p>
               <p>
                 <a href="#/">Review some of your games</a> first.
               </p>
@@ -129,12 +140,129 @@ export function TrainPage({
               player={player}
               tactic={tactic}
               perspective={perspective}
-              pool={pool}
             />
           )}
         </div>
+        <div
+          id="train-view-panel-mistakes"
+          role="tabpanel"
+          aria-labelledby="train-view-tab-mistakes"
+          tabIndex={0}
+          hidden={tab !== 'mistakes'}
+        >
+          <MistakesPanel
+            key={`${player ?? ''}|${tactic ?? ''}|${perspective ?? ''}`}
+            active={tab === 'mistakes'}
+            loading={stored.loading}
+            reviews={stored.value ?? []}
+            player={player}
+            tactic={tactic}
+            perspective={perspective}
+          />
+        </div>
       </main>
     </>
+  )
+}
+
+function MistakesPanel({
+  active,
+  loading,
+  reviews,
+  player,
+  tactic,
+  perspective,
+}: {
+  active: boolean
+  loading: boolean
+  reviews: readonly StoredReview[]
+  player: string | null
+  tactic: string | null
+  perspective: PuzzlePerspective | null
+}) {
+  const [index, setIndex] = useState(0)
+  const key =
+    active && !loading && player
+      ? `mistakes|${player}|${tactic ?? ''}|${perspective ?? ''}|${reviews.map((r) => `${r.id}:${r.review.schemaVersion}`).join(',')}`
+      : null
+  const result = useAsync(key, (signal) => mistakePositionsFor(reviews, player!, tactic, perspective, undefined, signal))
+  const positions = result.value ?? []
+  const current = positions[index]
+  const move = current?.stored.review.moves[current.moveIndex]
+
+  return (
+    <section className="mistakes-panel" aria-label="Mistake positions">
+      {loading || result.loading ? (
+        <p className="muted" role="status">
+          Finding your recent mistakes…
+        </p>
+      ) : result.error ? (
+        <p className="error" role="alert">
+          Could not load your mistakes. Try reloading the page.
+        </p>
+      ) : player === null ? (
+        <div className="empty">
+          <p>Mistakes come from your own games, so there is nothing to review yet.</p>
+          <p>
+            <a href="#/">Review some of your games</a> first.
+          </p>
+        </div>
+      ) : positions.length === 0 ? (
+        <div className="empty">
+          <p>{tactic ? 'No matching mistakes found.' : 'No mistakes found in your reviewed games yet.'}</p>
+          <p className="muted">Review more games to find recent positions to study.</p>
+        </div>
+      ) : current && move ? (
+        <>
+          <div className="mistake-queue">
+            <div>
+              <h2>Review a mistake</h2>
+              <p className="muted">
+                {current.stored.review.white === player
+                  ? current.stored.review.black
+                  : current.stored.review.white}
+                {current.date ? ` · ${current.date}` : ''}
+                {' · '}
+                Move {move.number}
+                {move.color === 'b' ? '…' : '.'} {move.san} ({move.label})
+                {current.tactic
+                  ? ` · ${tacticName(current.tactic.kind, current.tactic.perspective)}`
+                  : ''}
+              </p>
+            </div>
+            <nav className="mistake-navigation" aria-label="Mistake position navigation">
+              <button
+                className="secondary"
+                type="button"
+                disabled={index === 0}
+                onClick={() => setIndex(index - 1)}
+              >
+                Previous position
+              </button>
+              <span className="muted" role="status">
+                {index + 1} of {positions.length}
+              </span>
+              <button
+                className="secondary"
+                type="button"
+                disabled={index === positions.length - 1}
+                onClick={() => setIndex(index + 1)}
+              >
+                Next position
+              </button>
+            </nav>
+          </div>
+          <ReviewView
+            key={`${current.stored.id}|${current.stored.review.schemaVersion}|${current.ply}`}
+            id={current.stored.id}
+            review={current.stored.review}
+            me={player}
+            initialPly={current.ply}
+            embedded
+          />
+        </>
+      ) : null}
+    </section>
   )
 }
 
@@ -143,18 +271,18 @@ function Session({
   player,
   tactic,
   perspective,
-  pool,
 }: {
   player: string
   tactic: string | null
   perspective: PuzzlePerspective | null
-  pool: PuzzlePool
 }) {
   const [records, setRecords] = useState<PuzzleRecord[] | null>(null)
   const [progress, setProgress] = useState<SyncProgress | null>(null)
   const [failed, setFailed] = useState(false)
+  const [puzzleTab, setPuzzleTab] = useState<'new' | 'completed'>('new')
+  const [replayId, setReplayId] = useState<string | null>(null)
   // Undefined until selection starts; null once this tab has no new puzzle to ask.
-  const [chosen, setChosen] = useState<{ pool: PuzzlePool; id: string | null } | undefined>(undefined)
+  const [chosen, setChosen] = useState<{ id: string | null } | undefined>(undefined)
   // Moved on with each answer, so the day's count and what is due follow the clock.
   const [now, setNow] = useState(() => Date.now())
   const [asked, setAsked] = useState<ReadonlySet<string>>(new Set())
@@ -197,19 +325,23 @@ function Session({
   }, [player])
 
   const focusName = tactic === null ? '' : perspective ? tacticName(tactic, perspective) : tacticTopic(tactic)
-  const poolRecords = records ? withPool(records, pool) : null
+  const newPoolRecords = records ? withPool(records, 'miss') : null
+  const completedRecords = records ? withPool(records, 'completed') : null
+  const poolRecords = puzzleTab === 'completed' ? completedRecords : newPoolRecords
   const focused = poolRecords ? withTactic(poolRecords, tactic, perspective) : null
+  const newFocused = newPoolRecords ? withTactic(newPoolRecords, tactic, perspective) : null
   // Puzzles of this tactic that a focus on one side leaves out only because their side is not known.
   const unsided =
     perspective && records
       ? withTactic(records, tactic).filter((r) => r.puzzle !== null && !r.perspective).length
       : 0
-  const startId = focused && pool !== 'completed' ? (pickNext(focused, now, asked)?.id ?? null) : null
+  const startId = newFocused ? (pickNext(newFocused, now, asked)?.id ?? null) : null
   // Lock the first puzzle as soon as there is one, so puzzles found later do not replace it mid-answer.
-  if (chosen === undefined || chosen.pool !== pool) setChosen({ pool, id: startId })
-  else if (chosen.id === null && startId !== null) setChosen({ pool, id: startId })
-  const currentId = chosen?.pool === pool ? (chosen.id ?? startId) : startId
+  if (chosen === undefined) setChosen({ id: startId })
+  else if (chosen.id === null && startId !== null) setChosen({ id: startId })
+  const currentId = chosen?.id ?? startId
   const current = records?.find((r) => r.id === currentId) ?? null
+  const replayRecord = records?.find((r) => r.id === replayId && r.puzzle !== null) ?? null
 
   const answered = async (record: PuzzleRecord, correct: boolean) => {
     const next = await (await getPuzzleService()).answer(record, correct)
@@ -221,15 +353,13 @@ function Session({
     const skip = new Set(asked).add(current.id)
     setAsked(skip)
     setChosen({
-      pool,
-      id: pickNext(withTactic(withPool(records, pool), tactic, perspective), Date.now(), skip)?.id ?? null,
+      id: pickNext(withTactic(withPool(records, 'miss'), tactic, perspective), Date.now(), skip)?.id ?? null,
     })
   }
 
   const stats = poolRecords ? summarize(poolRecords, now) : null
-  const count = focused?.filter((r) => r.puzzle !== null).length ?? 0
-  const day =
-    poolRecords && pool !== 'completed' ? today(poolRecords, now, startOfDay(now), DAILY_GOAL) : null
+  const count = newFocused?.filter((r) => r.puzzle !== null).length ?? 0
+  const day = newPoolRecords && puzzleTab === 'new' ? today(newPoolRecords, now, startOfDay(now), DAILY_GOAL) : null
   const searching = progress !== null && progress.done < progress.total
 
   return (
@@ -242,74 +372,137 @@ function Session({
       {failed && (
         <p className="muted">Something went wrong while preparing the puzzles. Try reloading the page.</p>
       )}
-      {tactic !== null && (
-        <p className="train-focus">
-          <span>
-            Focus: <strong>{focusName}</strong>
-            {focused && ` · ${count} puzzle${count === 1 ? '' : 's'}`}
-          </span>
-          <a href="#/train">Show all puzzles</a>
-        </p>
-      )}
-      {day && day.target > 0 && <DayStrip done={day.done} target={day.target} />}
-      {records === null ? (
-        <p className="muted">Reading your puzzles…</p>
-      ) : pool === 'completed' ? (
-        focused && focused.length > 0 ? (
-          <CompletedPuzzles records={focused} />
+      <div className="tabs train-tabs" role="tablist" aria-label="Puzzle status">
+        {(['new', 'completed'] as const).map((view) => (
+          <button
+            key={view}
+            id={`train-puzzle-tab-${view}`}
+            type="button"
+            role="tab"
+            aria-selected={puzzleTab === view}
+            aria-controls={`train-puzzle-panel-${view}`}
+            tabIndex={puzzleTab === view ? 0 : -1}
+            className="tab"
+            onClick={() => setPuzzleTab(view)}
+            onKeyDown={(e) => {
+              if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+              e.preventDefault()
+              e.stopPropagation()
+              const next = view === 'new' ? 'completed' : 'new'
+              setPuzzleTab(next)
+              document.getElementById(`train-puzzle-tab-${next}`)?.focus()
+            }}
+          >
+            {view === 'new' ? 'New puzzles' : 'Completed puzzles'}
+          </button>
+        ))}
+      </div>
+      <div
+        id="train-puzzle-panel-new"
+        role="tabpanel"
+        aria-labelledby="train-puzzle-tab-new"
+        tabIndex={0}
+        hidden={puzzleTab !== 'new'}
+      >
+        {tactic !== null && (
+          <p className="train-focus">
+            <span>
+              Focus: <strong>{focusName}</strong>
+              {newFocused && ` · ${count} puzzle${count === 1 ? '' : 's'}`}
+            </span>
+            <a href="#/train">Show all puzzles</a>
+          </p>
+        )}
+        {day && day.target > 0 && <DayStrip done={day.done} target={day.target} />}
+        <div>
+          {records === null ? (
+            <p className="muted">Reading your puzzles…</p>
+          ) : current ? (
+            <PuzzleCard key={current.id} record={current} onAnswered={answered} onNext={next} />
+          ) : tactic !== null && newFocused && newFocused.every((r) => r.puzzle === null) ? (
+            searching ? null : (
+              <div className="empty">
+                <p>No puzzles for “{focusName}” yet.</p>
+                <p className="muted">
+                  Not every mistake becomes a puzzle. <a href="#/train">Show all puzzles</a>.
+                </p>
+                {unsided > 0 && (
+                  <p className="muted">
+                    {unsided} puzzle{unsided === 1 ? '' : 's'} of {tacticTopic(tactic ?? '').toLowerCase()} could
+                    not be sorted into allowed or missed.{' '}
+                    <a
+                      href={`#/train?tactic=${encodeURIComponent(tactic ?? '')}&u=${encodeURIComponent(player)}`}
+                    >
+                      Practice them all
+                    </a>
+                    .
+                  </p>
+                )}
+              </div>
+            )
+          ) : stats && stats.total === 0 ? (
+            searching ? null : (
+              <div className="empty">
+                <p>No clear puzzles in your games yet.</p>
+                <p className="muted">
+                  A position becomes a puzzle when one move is clearly best. Review more of your games and check
+                  again.
+                </p>
+              </div>
+            )
+          ) : (
+            <div className="empty">
+              <p>No more new puzzles to practice right now.</p>
+              <p className="muted">
+                Your previous attempts are in Completed puzzles. Review more games to find new puzzles.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+      <div
+        id="train-puzzle-panel-completed"
+        role="tabpanel"
+        aria-labelledby="train-puzzle-tab-completed"
+        tabIndex={0}
+        hidden={puzzleTab !== 'completed'}
+      >
+        {records === null ? (
+          <p className="muted">Reading your puzzles…</p>
+        ) : replayRecord ? (
+          <>
+            <button className="ghost" type="button" onClick={() => setReplayId(null)}>
+              Back to completed list
+            </button>
+            <PuzzleCard
+              key={`replay|${replayRecord.id}`}
+              record={replayRecord}
+              onAnswered={answered}
+              onNext={() => setReplayId(null)}
+              nextLabel="Back to completed puzzles"
+            />
+          </>
+        ) : focused && focused.length > 0 ? (
+          <CompletedPuzzles records={focused} onSelect={(record) => setReplayId(record.id)} />
         ) : (
           <div className="empty">
             <p>No completed puzzles yet.</p>
-            <p className="muted">Puzzles move here after you try them from one of the practice tabs.</p>
+            <p className="muted">Puzzles appear here after you try them in New puzzles.</p>
           </div>
-        )
-      ) : current ? (
-        <PuzzleCard key={current.id} record={current} onAnswered={answered} onNext={next} />
-      ) : tactic !== null && focused && focused.every((r) => r.puzzle === null) ? (
-        searching ? null : (
-          <div className="empty">
-            <p>No puzzles for “{focusName}” yet.</p>
-            <p className="muted">
-              Not every mistake becomes a puzzle. <a href="#/train">Show all puzzles</a>.
-            </p>
-            {unsided > 0 && (
-              <p className="muted">
-                {unsided} puzzle{unsided === 1 ? '' : 's'} of {tacticTopic(tactic ?? '').toLowerCase()} could
-                not be sorted into allowed or missed.{' '}
-                <a
-                  href={`#/train?tactic=${encodeURIComponent(tactic ?? '')}&u=${encodeURIComponent(player)}`}
-                >
-                  Practise them all
-                </a>
-                .
-              </p>
-            )}
-          </div>
-        )
-      ) : stats && stats.total === 0 ? (
-        searching ? null : (
-          <div className="empty">
-            <p>No clear puzzles in your games yet.</p>
-            <p className="muted">
-              A position becomes a puzzle when one move is clearly best. Review more of your games and check
-              again.
-            </p>
-          </div>
-        )
-      ) : (
-        <div className="empty">
-          <p>No more new puzzles to practise right now.</p>
-          <p className="muted">
-            Your previous attempts are in Completed puzzles. Review more games to find new puzzles.
-          </p>
-        </div>
-      )}
+        )}
+      </div>
       {stats && stats.total > 0 && <Progress stats={stats} />}
     </>
   )
 }
 
-function CompletedPuzzles({ records }: { records: readonly PuzzleRecord[] }) {
+function CompletedPuzzles({
+  records,
+  onSelect,
+}: {
+  records: readonly PuzzleRecord[]
+  onSelect: (record: PuzzleRecord) => void
+}) {
   const completed = [...records].sort((a, b) => (b.progress.lastAt ?? 0) - (a.progress.lastAt ?? 0))
   return (
     <section className="train-completed" aria-label="Completed puzzles">
@@ -320,22 +513,30 @@ function CompletedPuzzles({ records }: { records: readonly PuzzleRecord[] }) {
           const lastWasCorrect = record.progress.box > 0
           return (
             <li key={record.id}>
-              <div>
-                <p>
-                  <strong>{puzzle.solutionSan}</strong> · {PHASE_NAMES[puzzle.phase]}
-                </p>
-                <p className="muted">
-                  Against {record.opponent}
-                  {record.date ? ` · ${record.date}` : ''}
-                </p>
-              </div>
-              <p>
-                <strong>Last answer: {lastWasCorrect ? 'correct' : 'not correct'}</strong>
-                <span className="muted">
-                  {' '}
-                  · {record.progress.solved} correct of {record.progress.attempts} attempts
+              <button
+                type="button"
+                className="completed-puzzle"
+                aria-label={`Redo puzzle: ${puzzle.solutionSan} against ${record.opponent}`}
+                onClick={() => onSelect(record)}
+              >
+                <span className="completed-puzzle-game">
+                  <span>
+                    <strong>{puzzle.solutionSan}</strong> · {PHASE_NAMES[puzzle.phase]}
+                  </span>
+                  <span className="muted">
+                    Against {record.opponent}
+                    {record.date ? ` · ${record.date}` : ''}
+                  </span>
                 </span>
-              </p>
+                <span className="completed-puzzle-progress">
+                  <strong>Last answer: {lastWasCorrect ? 'correct' : 'not correct'}</strong>
+                  <span className="muted">
+                    {' '}
+                    · {record.progress.solved} correct of {record.progress.attempts} attempts
+                  </span>
+                </span>
+                <span className="completed-puzzle-action">Redo</span>
+              </button>
             </li>
           )
         })}
@@ -483,10 +684,12 @@ function PuzzleCard({
   record,
   onAnswered,
   onNext,
+  nextLabel = 'Next puzzle',
 }: {
   record: PuzzleRecord
   onAnswered: (record: PuzzleRecord, correct: boolean) => Promise<void>
   onNext: () => void
+  nextLabel?: string
 }) {
   const puzzle = record.puzzle!
   const sq = BOARDS[usePrefs().board]
@@ -1075,7 +1278,7 @@ function PuzzleCard({
             )}
             <div className="train-actions">
               <button className="primary" onClick={onNext}>
-                Next puzzle
+                {nextLabel}
               </button>
               <a
                 className="secondary"

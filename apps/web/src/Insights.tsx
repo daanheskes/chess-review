@@ -74,7 +74,7 @@ export function InsightsPage() {
             <p>No reviewed games on this device yet.</p>
             <p className="muted">
               Review a few games and this page shows how your accuracy moves over time, where in the game your
-              errors happen, which tactics catch you out, and how your openings and time controls go. It is
+              mistakes happen, which tactics catch you out, and how your openings and time controls go. It is
               worked out in your browser from your reviews; nothing is sent anywhere.
             </p>
             <a className="primary" href="#/">
@@ -144,7 +144,7 @@ function Report({ stats, player }: { stats: Stats; player: string | null }) {
           <span className="tile-sub">wins, draws and losses</span>
         </div>
         <div className="tile">
-          <span className="tile-label">Errors</span>
+          <span className="tile-label">Mistakes</span>
           <b className="tile-num">{per100.toFixed(1)}</b>
           <span className="tile-sub">per 100 of your moves, inaccuracies included</span>
         </div>
@@ -180,7 +180,7 @@ function Report({ stats, player }: { stats: Stats; player: string | null }) {
 
       <div className="pair">
         <section className="card" aria-labelledby="phases">
-          <h2 id="phases">Errors by phase</h2>
+          <h2 id="phases">Mistakes by phase</h2>
           <p className="muted">Per 100 of your moves in each phase of the game.</p>
           <div className="phasebars">
             {phases.map((p) => {
@@ -252,7 +252,7 @@ function Report({ stats, player }: { stats: Stats; player: string | null }) {
         </section>
 
         <section className="card" aria-labelledby="tactics">
-          <h2 id="tactics">What your errors had in common</h2>
+          <h2 id="tactics">What your mistakes had in common</h2>
           {stats.tactics.length === 0 ? (
             <p className="muted">No tactic stood out in your mistakes and blunders yet.</p>
           ) : (
@@ -270,9 +270,9 @@ function Report({ stats, player }: { stats: Stats; player: string | null }) {
                       <td className="practise">
                         {t.perspective !== 'played' && (
                           <a
-                            href={`#/train?tactic=${encodeURIComponent(t.kind)}&p=${t.perspective}${player ? `&u=${encodeURIComponent(player)}` : ''}`}
+                            href={`#/train?tab=mistakes&tactic=${encodeURIComponent(t.kind)}&p=${t.perspective}${player ? `&u=${encodeURIComponent(player)}` : ''}`}
                           >
-                            Practise<span className="sr-only"> {tacticName(t.kind, t.perspective)}</span>
+                            Practice<span className="sr-only"> {tacticName(t.kind, t.perspective)}</span>
                           </a>
                         )}
                       </td>

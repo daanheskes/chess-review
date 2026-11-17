@@ -2,6 +2,44 @@
 .train-tabs {
   margin-top: var(--s-4);
 }
+.train-view-tabs {
+  margin-bottom: var(--s-4);
+}
+.mistakes-panel {
+  min-width: 0;
+}
+.mistake-queue {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: var(--s-4);
+  margin: var(--s-5) 0 var(--s-3);
+  padding-bottom: var(--s-4);
+  border-bottom: 1px solid var(--line);
+}
+.mistake-queue h2 {
+  margin: 0;
+  font-size: var(--fs-h2);
+}
+.mistake-queue p {
+  margin: var(--s-2) 0 0;
+}
+.mistake-navigation {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--s-3);
+}
+.mistake-navigation button {
+  white-space: nowrap;
+}
+.mistake-navigation button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.embedded-review .title {
+  margin-top: var(--s-4);
+}
 .train-stage {
   margin-top: var(--s-5);
 }
@@ -185,15 +223,45 @@
   align-items: baseline;
   justify-content: space-between;
   gap: var(--s-2) var(--s-4);
-  padding: var(--s-4) 0;
-  border-top: 1px solid var(--line);
+  padding: 0;
 }
-.train-completed li > div {
+.completed-puzzle {
+  display: flex;
+  width: 100%;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--s-2) var(--s-4);
+  padding: var(--s-4) var(--s-2);
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+}
+.completed-puzzle:hover {
+  background: var(--surface-2);
+}
+.completed-puzzle-game {
   display: grid;
   gap: var(--s-1);
 }
-.train-completed p {
-  margin: 0;
+.completed-puzzle-progress {
+  flex: 1;
+}
+.completed-puzzle-action {
+  color: var(--signal);
+  font: 600 var(--fs-sm) var(--font-mono);
+}
+@media (max-width: 520px) {
+  .completed-puzzle {
+    align-items: flex-start;
+  }
+  .completed-puzzle-action {
+    margin-left: auto;
+  }
 }
 .train-tiles {
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -249,6 +317,19 @@
   .train-tabs .tab {
     min-width: 0;
     text-align: center;
+  }
+  .mistake-queue {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .mistake-navigation {
+    justify-content: space-between;
+    gap: var(--s-2);
+  }
+  .mistake-navigation button {
+    flex: 1;
+    min-width: 0;
+    white-space: normal;
   }
 }
 

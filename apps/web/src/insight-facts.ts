@@ -1,8 +1,37 @@
-import { AnalysisAborted, explainReviewMove, gameFacts, type GameFacts } from '@chessreview/core'
+import {
+  AnalysisAborted,
+  explainReviewMove,
+  gameFacts,
+  isoDate,
+  sideOf,
+  type GameFacts,
+  type PuzzlePerspective,
+} from '@chessreview/core'
 import type { StoredReview } from './services'
 
 // Facts per review and player, kept for the session: explaining every error is the slow part.
 const cache = new Map<string, GameFacts | null>()
+const tacticCache = new Map<string, { kind: string; perspective: PuzzlePerspective } | null>()
+
+function tacticFor(stored: StoredReview, player: string, moveIndex: number) {
+  const key = `${stored.id}|${stored.review.schemaVersion}|${player.toLowerCase()}|${moveIndex}`
+  if (tacticCache.has(key)) return tacticCache.get(key) ?? null
+  const explanation = explainReviewMove(stored.review, moveIndex)
+  const tag =
+    explanation && explanation.perspective !== 'played'
+      ? { kind: explanation.kind, perspective: explanation.perspective }
+      : null
+  tacticCache.set(key, tag)
+  return tag
+}
+
+export interface MistakePosition {
+  stored: StoredReview
+  moveIndex: number
+  ply: number
+  date: string | null
+  tactic: { kind: string; perspective: PuzzlePerspective } | null
+}
 
 /**
  * The player's side of every stored game they played, with their errors tagged by the tactic behind
@@ -24,8 +53,7 @@ export async function factsFor(
       cache.set(
         key,
         gameFacts(s.id, s.review, player, s.createdAt, (m) => {
-          const e = explainReviewMove(s.review, m)
-          return e && e.perspective !== 'played' ? { kind: e.kind, perspective: e.perspective } : null
+          return tacticFor(s, player, m)
         }),
       )
     }
@@ -38,6 +66,62 @@ export async function factsFor(
     }
   }
   return out
+}
+
+/** The player's recent mistake positions, optionally narrowed to an Insights tactic. */
+export async function mistakePositionsFor(
+  stored: readonly StoredReview[],
+  player: string,
+  tactic: string | null,
+  perspective: PuzzlePerspective | null,
+  onProgress: (done: number, total: number) => void = () => undefined,
+  signal?: AbortSignal,
+): Promise<MistakePosition[]> {
+  const out: MistakePosition[] = []
+  let slice = performance.now()
+  for (const [i, s] of stored.entries()) {
+    if (signal?.aborted) throw new AnalysisAborted()
+    const side = sideOf(s.review, player)
+    if (side) {
+      const color = side === 'white' ? 'w' : 'b'
+      for (const [moveIndex, move] of s.review.moves.entries()) {
+        if (signal?.aborted) throw new AnalysisAborted()
+        if (
+          move.color === color &&
+          (move.label === 'Mistake' || move.label === 'Miss' || move.label === 'Blunder')
+        ) {
+          const tag = tacticFor(s, player, moveIndex)
+          if (
+            tactic === null ||
+            (tag?.kind === tactic && (perspective === null || tag.perspective === perspective))
+          ) {
+            out.push({
+              stored: s,
+              moveIndex,
+              ply: move.ply,
+              date: isoDate(s.review.headers),
+              tactic: tag,
+            })
+          }
+        }
+        if (performance.now() - slice > 20) {
+          onProgress(i, stored.length)
+          await new Promise((resolve) => setTimeout(resolve, 0))
+          slice = performance.now()
+        }
+      }
+    }
+    onProgress(i + 1, stored.length)
+  }
+  const recentDay = (position: MistakePosition) =>
+    position.date ?? new Date(position.stored.createdAt).toISOString().slice(0, 10)
+  return out.sort(
+    (a, b) =>
+      recentDay(b).localeCompare(recentDay(a)) ||
+      b.stored.createdAt - a.stored.createdAt ||
+      b.ply - a.ply ||
+      a.stored.id.localeCompare(b.stored.id),
+  )
 }
 
 /** Words for a tactic tag, as a row label: what happened to the player. */
