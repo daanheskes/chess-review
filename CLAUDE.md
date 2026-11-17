@@ -5,18 +5,18 @@ Chess game review that runs entirely in the browser (Stockfish WASM in Web Worke
 
 ## Commands
 
-- `pnpm check`: case clashes, types, lint, format, unit and integration tests with real Stockfish (~30 s)
-- `pnpm e2e`: production build, then Playwright against that build and its CSP
+- `pnpm check`: case clashes, types, lint and format
+- `pnpm e2e`: production build, then active Playwright regression checks against that build and its CSP
 - `pnpm build && pnpm budget`: download-size budget
 - `pnpm tactics-eval`, `pnpm label-audit`, `pnpm explain-corpus`: precision of detectors, labels and explanations
 - `pnpm build && pnpm screenshots`: regenerate `docs/screenshots/` from real engine reviews
 
 ## Verify before you say done
 
-- Every change: run `pnpm check` and quote its summary line (`Tests 358 passed`).
+- Every change: run `pnpm check` and summarize the result.
 - Changed `apps/web`, the engine worker, `apps/web/public/_headers` or routing: also run `pnpm e2e`.
 - UI: open it in Playwright at desktop width and 390 px, in light and dark, and look at the screenshots.
-- Bug fix: first write the test that fails because of the bug.
+- New behavior or bug fix: add a focused regression test.
 - Detector, label or explanation change: run the matching corpus script and report its numbers.
 - Never retry, skip or loosen a test to get green. A flaky test is a bug: find its cause.
 

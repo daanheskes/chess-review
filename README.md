@@ -31,15 +31,16 @@ Regenerate these with `pnpm build && pnpm screenshots`; they are real output of 
 
     pnpm install
     pnpm dev             # http://localhost:5173
-    pnpm check           # types, lint, formatting, unit + integration tests
-    pnpm e2e             # builds, then runs the browser tests against the production build
+    pnpm check           # case clashes, types, lint and formatting
+    pnpm test            # focused unit tests added for new behavior
+    pnpm e2e             # builds, then runs the active browser regression checks
     pnpm budget          # after a build: checks the download stays within its size budget
     pnpm screenshots     # after a build: regenerates the pictures in docs/screenshots
 
 Requires Node 22+ and pnpm 10 (`corepack enable` picks up the version pinned in `package.json`).
 `pnpm install` fetches the Stockfish WASM build (the `stockfish` package's postinstall, the only
 dependency build script allowed in `pnpm-workspace.yaml`); `predev` and `prebuild` copy it into
-`apps/web/public/engine`. The first time you run the browser tests, install Chromium with
+`apps/web/public/engine`. The first time you run browser checks, install Chromium with
 `pnpm --filter @chessreview/web exec playwright install --with-deps chromium`.
 
 ## How it is organised
@@ -48,8 +49,8 @@ dependency build script allowed in `pnpm-workspace.yaml`); `predev` and `prebuil
 | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `packages/core`    | Pure review logic: rules, accuracy, phases, opening book. Runs anywhere.                                                                |
 | `packages/engine`  | UCI client, Web Worker and Node transports, parallel engine pool.                                                                       |
-| `apps/web`         | React app, services layer (chess.com, storage, review queue), e2e tests.                                                                |
-| `reference/python` | Original implementation, kept as the test oracle for `core`.                                                                            |
+| `apps/web`         | React app, services layer (chess.com, storage, review queue), browser regression checks.                                                |
+| `reference/python` | Original implementation and golden-fixture generator for `core`.                                                                        |
 | `docs/`            | [Architecture](docs/ARCHITECTURE.md), [decision records](docs/adr/README.md), [deployment](docs/DEPLOY.md), [roadmap](docs/ROADMAP.md). |
 
 ## How moves are labelled

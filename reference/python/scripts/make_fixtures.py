@@ -1,9 +1,8 @@
 """Generate golden fixtures for the TypeScript port.
 
 Each fixture holds a PGN, the raw engine records for every position, and the review this Python
-reference builds from them. The TypeScript tests feed the same records through the TS
-classifier and require an identical review. Engine output is recorded once so the comparison
-isolates the classification logic from the engine.
+reference builds from them. These golden files document the expected TypeScript classifier output.
+Engine output is recorded once so the comparison isolates classification logic from the engine.
 
     .venv/bin/python scripts/make_fixtures.py [name ...]
 """
@@ -18,7 +17,7 @@ from chessreview import chesscom
 from chessreview.analysis import Settings, build_review, evaluate_positions, load_game
 
 OUT = Path(__file__).resolve().parents[3] / "packages" / "core" / "test" / "fixtures"
-# Small node budget keeps regeneration to a minute or so per game. The TS tests do not depend on it.
+# Small node budget keeps regeneration to a minute or so per game.
 SETTINGS = Settings(depth=16, nodes=200_000, threads=1, hash_mb=16)
 
 KASPAROV_TOPALOV = """[Event "Hoogovens"]

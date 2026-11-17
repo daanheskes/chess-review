@@ -51,17 +51,14 @@ build reproduces native Stockfish evaluations exactly on the test games.
 ### 4. Classification is a pure function of recorded engine output
 
 `buildReview(game, records, book, settings)` has no engine, clock or I/O. The engine's output for a game
-is a list of `EngineRecord`s (score, mate, best move, runner-up score). That makes the rules testable
-without an engine and lets Python and TypeScript be compared on identical input.
+is a list of `EngineRecord`s (score, mate, best move, runner-up score). This keeps classification
+independent of the engine and lets Python and TypeScript use identical input.
 
 ### 5. Python is the oracle
 
-`packages/core/test/parity.test.ts` feeds recorded native-Stockfish output for ten games (real games,
-Kasparov–Topalov, the Opera Game, and hand-made promotion, en passant, castling and stalemate cases)
-through the TypeScript classifier and requires the Python result: identical labels, notation, positions,
-counts, phases and openings, and numbers within Python's rounding.
-`packages/engine/test/integration.test.ts` goes one step further and checks the real WASM engine against
-the same recorded evaluations.
+`reference/python` defines the expected classifications. The golden fixtures in
+`packages/core/test/fixtures/` retain recorded engine output and Python reviews for real and hand-made
+games; `scripts/make_fixtures.py` regenerates them when the rules change.
 
 ### 6. A review's identity
 
@@ -177,27 +174,27 @@ settings before storing it. `docs/adr/0006-import-export.md` has the details.
 
 ## Changing the rules
 
-1. Change `reference/python/src/chessreview/analysis.py` and its tests.
+1. Change `reference/python/src/chessreview/analysis.py`.
 2. Bump `ANALYSIS_VERSION` in `packages/core/src/rules.ts`.
 3. Regenerate fixtures (`reference/python/README.md`) and make `packages/core` match. When only the
    classification changed (not what the engine is asked), `scripts/reclassify_fixtures.py` rebuilds
    the expected reviews from the recorded engine output, with no engine or network.
-4. `pnpm check` and `pnpm e2e`.
+4. `pnpm check`, `pnpm e2e`, and the matching corpus audit.
 
 Adding a label means: the `LABELS` list and `GLYPH` in core, the rule in `buildReview`, a colour in
-`apps/web/src/labels.ts` and `styles.css`, and a test for each.
+`apps/web/src/labels.ts` and `styles.css`, plus a focused test for the new behavior.
 
 ## Security
 
 No backend and no accounts. The deployed site sets a strict Content-Security-Policy
 (`apps/web/public/_headers`): scripts and workers from the same origin only, `wasm-unsafe-eval` for the
-engine, and `connect-src` limited to `api.chess.com` and `lichess.org`. The end-to-end tests run under that policy and fail on
-any violation. The engine is GPL-3.0 software, so the project is GPL-3.0-or-later and ships the licence and
+engine, and `connect-src` limited to `api.chess.com` and `lichess.org`. Browser regression checks run under
+that policy. The engine is GPL-3.0 software, so the project is GPL-3.0-or-later and ships the licence and
 source pointers with the engine files.
 
 ## Known limits and next steps
 
 - Share links for a review (today a review lives on the device that made it).
-- The browser tests run in Chromium only; Firefox and WebKit are next.
+- Browser regression checks run in Chromium only.
 
 The longer list is in [ROADMAP.md](ROADMAP.md).

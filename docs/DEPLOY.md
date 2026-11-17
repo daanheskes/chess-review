@@ -84,8 +84,8 @@ GitHub Pages cannot set custom headers, so it works but runs without the Content
 
 ## Before every release
 
-    pnpm check          # types, lint, formatting, unit and integration tests
-    pnpm e2e            # builds, then drives the production build in a real browser under the CSP
+    pnpm check          # case clashes, types, lint and formatting
+    pnpm e2e            # builds, then drives active browser regression checks under the CSP
 
 ## Checking a deployment
 

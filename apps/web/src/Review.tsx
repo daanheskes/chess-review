@@ -27,6 +27,7 @@ import { BOARDS, usePrefs } from './prefs'
 import { NAMED_PIECES, isLight, reducedMotion } from './pieces'
 import type { LiveEval } from './services'
 import { AppHeader } from './AppHeader'
+import { IconButton } from './icons'
 import { overlayFor } from './tactics'
 import { describePosition } from './describe'
 import { formatRemaining } from './services/eta'
@@ -461,17 +462,23 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
                   outline
                   d="M8 20V5M8 5L4.5 8.5M8 5l3.5 3.5M16 4v15M16 19l-3.5-3.5M16 19l3.5-3.5"
                 />
-                {!exploring && (
-                  <button className="secondary sm" onClick={() => startExploring(explore(fen))}>
-                    Explore
+                {exploring && (
+                  <button
+                    className="secondary sm mobile-explore-back"
+                    onClick={() => setExploring(null)}
+                  >
+                    Back to the game
                   </button>
                 )}
               </div>
             </div>
             <p className="hint">
-              Right-click a square to highlight it; right-drag to draw an arrow.
-              {exploring &&
-                ' Arrow keys step through your moves; B toggles the best move; Esc returns to the game.'}
+              <span className="hint-desktop">
+                Right-click a square to highlight it; right-drag to draw an arrow.
+                {exploring &&
+                  ' Arrow keys step through your moves; B toggles the best move; Esc returns to the game.'}
+              </span>
+              <span className="hint-mobile">Long-tap a square to highlight it</span>
             </p>
             {!exploring && (
               <details className="shortcuts">
@@ -500,7 +507,7 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
             )}
           </section>
 
-          <aside className={`panel${tab === 'report' ? ' compact' : ''}`}>
+          <div className="stage-side">
             <div className="summary">
               <label className="best-toggle">
                 <input
@@ -523,63 +530,65 @@ function ReviewView({ id, review, me }: { id: string; review: Review; me: string
                 />
               ))}
             </div>
-            <div className="tabs" role="tablist" aria-label="Review">
-              {(['moves', 'report'] as const).map((t) => (
-                <button
-                  key={t}
-                  id={`tab-${t}`}
-                  role="tab"
-                  aria-selected={tab === t}
-                  aria-controls="tabpanel"
-                  tabIndex={tab === t ? 0 : -1}
-                  className="tab"
-                  onClick={() => setTab(t)}
-                  onKeyDown={(e) => {
-                    // The tab pattern: arrows move between tabs (and don't step through the game).
-                    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
-                    e.stopPropagation()
-                    const next = t === 'moves' ? 'report' : 'moves'
-                    setTab(next)
-                    document.getElementById(`tab-${next}`)?.focus()
-                  }}
-                >
-                  {t === 'moves' ? 'Moves' : 'Report'}
-                </button>
-              ))}
-            </div>
-            <div id="tabpanel" className="tabpanel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
-              {tab === 'moves' ? (
-                <>
-                  {exploring ? (
-                    <ExplorePanel
-                      x={exploring}
-                      live={live}
-                      thinking={thinking}
-                      onChange={setExploring}
-                      onExit={() => setExploring(null)}
-                    />
-                  ) : (
-                    <Commentary
-                      move={move}
-                      tactic={tactic}
-                      review={review}
-                      mySide={mySide}
-                      ply={ply}
-                      bestShown={bestShown}
-                      onToggleBest={toggleBestAlternative}
-                      onExplore={startExploring}
-                      prevKey={prevKey}
-                      nextKey={nextKey}
-                      goto={goto}
-                    />
-                  )}
-                  <MoveList review={review} ply={ply} onSelect={goto} />
-                </>
-              ) : (
-                <Report review={review} mySide={mySide} goto={goto} id={id} />
-              )}
-            </div>
-          </aside>
+            <aside className={`panel${tab === 'report' ? ' compact' : ''}`}>
+              <div className="tabs" role="tablist" aria-label="Review">
+                {(['moves', 'report'] as const).map((t) => (
+                  <button
+                    key={t}
+                    id={`tab-${t}`}
+                    role="tab"
+                    aria-selected={tab === t}
+                    aria-controls="tabpanel"
+                    tabIndex={tab === t ? 0 : -1}
+                    className="tab"
+                    onClick={() => setTab(t)}
+                    onKeyDown={(e) => {
+                      // The tab pattern: arrows move between tabs (and don't step through the game).
+                      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+                      e.stopPropagation()
+                      const next = t === 'moves' ? 'report' : 'moves'
+                      setTab(next)
+                      document.getElementById(`tab-${next}`)?.focus()
+                    }}
+                  >
+                    {t === 'moves' ? 'Moves' : 'Report'}
+                  </button>
+                ))}
+              </div>
+              <div id="tabpanel" className="tabpanel" role="tabpanel" aria-labelledby={`tab-${tab}`}>
+                {tab === 'moves' ? (
+                  <>
+                    {exploring ? (
+                      <ExplorePanel
+                        x={exploring}
+                        live={live}
+                        thinking={thinking}
+                        onChange={setExploring}
+                        onExit={() => setExploring(null)}
+                      />
+                    ) : (
+                      <Commentary
+                        move={move}
+                        tactic={tactic}
+                        review={review}
+                        mySide={mySide}
+                        ply={ply}
+                        bestShown={bestShown}
+                        onToggleBest={toggleBestAlternative}
+                        onExplore={startExploring}
+                        prevKey={prevKey}
+                        nextKey={nextKey}
+                        goto={goto}
+                      />
+                    )}
+                    <MoveList review={review} ply={ply} onSelect={goto} />
+                  </>
+                ) : (
+                  <Report review={review} mySide={mySide} goto={goto} id={id} />
+                )}
+              </div>
+            </aside>
+          </div>
         </div>
 
         <section className="tracecard" aria-label="Win chance over the game">
@@ -635,47 +644,6 @@ function EvalBar({ win, evalLabel, orientation }: { win: number; evalLabel: stri
         {evalLabel}
       </span>
     </div>
-  )
-}
-
-function IconButton({
-  label,
-  d,
-  onClick,
-  disabled,
-  outline = false,
-  small = false,
-}: {
-  label: string
-  d: string
-  onClick: () => void
-  disabled: boolean
-  /** Draw the path as a stroke instead of a filled shape. */
-  outline?: boolean
-  small?: boolean
-}) {
-  return (
-    <button
-      className={`icon${small ? ' sm' : ''}`}
-      aria-label={label}
-      title={label}
-      onClick={onClick}
-      disabled={disabled}
-    >
-      <svg
-        viewBox="0 0 24 24"
-        width={small ? 16 : 20}
-        height={small ? 16 : 20}
-        fill={outline ? 'none' : 'currentColor'}
-        stroke="currentColor"
-        strokeWidth={outline ? 1.8 : 2}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true"
-      >
-        <path d={d} />
-      </svg>
-    </button>
   )
 }
 

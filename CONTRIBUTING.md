@@ -9,19 +9,20 @@ Node 22+ and pnpm 10 (`corepack enable` picks up the version pinned in `package.
 
     pnpm install
     pnpm dev                     # http://localhost:5173
-    pnpm --filter @chessreview/web exec playwright install --with-deps chromium   # once, for e2e
+    pnpm --filter @chessreview/web exec playwright install --with-deps chromium   # once, for browser checks
 
 `pnpm install` fetches the Stockfish WASM build; `predev` and `prebuild` copy it into
 `apps/web/public/engine`.
 
 ## Before you open a pull request
 
-    pnpm check     # types, lint, formatting, unit and integration tests (real Stockfish in Node)
-    pnpm e2e       # builds, then runs the browser tests against the production build and its CSP
+    pnpm check     # case clashes, types, lint and formatting
+    pnpm test      # focused unit tests for new behavior
+    pnpm e2e       # builds, then runs active browser regression checks under the production CSP
     pnpm budget    # after a build: the download stays within its size budget
 
-All three run in CI. Tests must be deterministic: never retry or loosen an assertion to make a test
-pass, and never skip one. If something is slow or flaky, fix the cause.
+These checks run in CI. Add a focused test for new behavior or a bug fix; avoid restoring retired
+tests that duplicate coverage. `pnpm check` does not run tests, so routine checks stay fast.
 
 For changes to the UI, check it at desktop width and at 390 px, in light and dark themes.
 
@@ -29,7 +30,7 @@ For changes to the UI, check it at desktop width and at 390 px, in light and dar
 
 | Change                                    | Put it in                                                        |
 | ----------------------------------------- | ---------------------------------------------------------------- |
-| Anything about chess or the review itself | `packages/core`, as a pure function with tests (no DOM, I/O)     |
+| Anything about chess or the review itself | `packages/core`, as a pure function with focused tests (no DOM, I/O) |
 | Talking to Stockfish                      | `packages/engine`                                                |
 | Storage, fetching games, queues           | `apps/web/src/services`                                          |
 | Screens                                   | `apps/web/src`                                                   |
@@ -46,7 +47,7 @@ typecheck.
 - **The Python reference is the oracle.** `reference/python` defines the labels, accuracy and
   phases; `packages/core` must reproduce its golden fixtures exactly.
 - **Changing a rule** (a label threshold, the accuracy formula, what `ANALYSIS_VERSION` covers):
-  1. change `reference/python/src/chessreview/analysis.py` and its tests first;
+  1. change `reference/python/src/chessreview/analysis.py` first;
   2. bump `ANALYSIS_VERSION` in `packages/core/src/rules.ts`;
   3. regenerate the fixtures with Stockfish 19 (`reference/python/README.md`) and make
      `packages/core` match; never edit a fixture by hand;
@@ -54,29 +55,11 @@ typecheck.
 - **Explanations are deterministic.** No LLM or remote API, ever: everything a review says must
   follow from the engine's output and be computed on the device.
 
-## Testing Train
-
-Train has three layers, and a test belongs in the lowest one that can show the behaviour.
-
-- **`packages/core`** holds the rules: which mistakes are candidates (`puzzleCandidates`), when a deeper search
-  confirms one (`verifyPuzzle`, with a fake `Engine`), the schedule (`answer`, `queue`, `pickNext`), the day's count
-  (`today`) and the tactic focus (`withTactic`). Time is always a parameter (`now`, `dayStart`), so these tests need
-  no clock and no time zone; keep it that way.
-- **`apps/web/src/services/puzzles.ts`** is tested in `apps/web/test/puzzles.test.ts` with `memoryStore()` and a fake
-  engine, and small `limits`. Put a review in the store with `reviewGame`, then call `sync` or `list`. To test code
-  that reads a review back (the side-of-tactic backfill), build one whose fake engine sees the tactic.
-- **`apps/web/e2e/train.spec.ts`** drives the page. It reviews a pasted PGN so a player exists, then writes a puzzle
-  straight into the `puzzles` store of IndexedDB, so a test does not depend on the engine finding one.
-
-A change to what a stored puzzle holds follows the same rule as other stored data: make a new field optional and
-fill it in lazily when puzzles are listed, with a test for records written before it. Raise the IndexedDB version
-only for a new store or index, and add an upgrade test from the previous version (`apps/web/test/storage.test.ts`).
-
 ## Things to avoid
 
 - Telemetry, analytics, trackers, or any paid or third-party API.
 - Loosening the Content-Security-Policy in `apps/web/public/_headers`. If a feature needs a new
-  origin, add exactly that origin and an e2e test that exercises it.
+  origin, add exactly that origin and a focused browser check for it.
 - New dependencies without a reason. Say in the pull request, in one line, why each is worth it.
 - Gradients, card grids, entrance animations, or a second border radius. The design is a cool paper
   palette with Bricolage Grotesque and Geist; spend boldness in one place per screen.

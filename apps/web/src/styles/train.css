@@ -139,11 +139,6 @@
 .train-live {
   min-width: 0;
 }
-.train-analysis-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--s-2);
-}
 .train-live .bestline {
   flex-wrap: wrap;
 }

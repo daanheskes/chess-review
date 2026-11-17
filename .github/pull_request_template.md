@@ -4,7 +4,7 @@
 
 ## Evidence
 
-<!-- Tests added, `pnpm check` / `pnpm e2e` / `pnpm budget` results, screenshots (desktop and 390 px,
+<!-- Focused tests added, `pnpm check` / `pnpm e2e` / `pnpm budget` results, screenshots (desktop and 390 px,
 light and dark) for UI changes, and numbers for any claim about speed, quality or size. -->
 
 ## Decisions

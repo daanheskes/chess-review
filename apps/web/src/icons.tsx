@@ -37,3 +37,44 @@ export function GearIcon() {
     </svg>
   )
 }
+
+export function IconButton({
+  label,
+  d,
+  onClick,
+  disabled,
+  outline = false,
+  small = false,
+}: {
+  label: string
+  d: string
+  onClick: () => void
+  disabled: boolean
+  /** Draw the path as a stroke instead of a filled shape. */
+  outline?: boolean
+  small?: boolean
+}) {
+  return (
+    <button
+      className={`icon${small ? ' sm' : ''}`}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width={small ? 16 : 20}
+        height={small ? 16 : 20}
+        fill={outline ? 'none' : 'currentColor'}
+        stroke="currentColor"
+        strokeWidth={outline ? 1.8 : 2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d={d} />
+      </svg>
+    </button>
+  )
+}

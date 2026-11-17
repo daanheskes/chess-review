@@ -44,13 +44,21 @@
   display: grid;
   /* the board is as large as the window height allows; the panel takes whatever width is left */
   grid-template-columns: minmax(0, max(380px, calc(100vh - 250px))) minmax(380px, 1fr);
+  grid-template-areas: 'board side';
   gap: var(--s-7);
   align-items: stretch;
 }
 .boardcol {
+  grid-area: board;
   width: 100%;
   /* the board and its controls fit one screen; the trace is a scroll away */
   max-width: max(380px, calc(100vh - 250px));
+}
+.stage-side {
+  grid-area: side;
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
 }
 .board-row {
   display: grid;
@@ -137,6 +145,9 @@
   margin: var(--s-3) 0 0 34px;
   font-size: var(--fs-xs);
   color: var(--ink-2);
+}
+.hint-mobile {
+  display: none;
 }
 .shortcuts summary {
   width: max-content;
@@ -275,6 +286,7 @@ kbd {
 /* ---------- the panel ---------- */
 .panel {
   display: flex;
+  flex: 1;
   flex-direction: column;
   min-height: 0;
   overflow: hidden;
@@ -520,6 +532,9 @@ kbd {
   font: inherit;
   cursor: pointer;
 }
+.mobile-explore-back {
+  display: none;
+}
 .chip:hover {
   background: var(--surface-3);
 }
@@ -740,12 +755,21 @@ kbd {
 @media (max-width: 920px) {
   .stage {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: 'summary' 'board' 'panel';
+    row-gap: var(--s-4);
   }
   .boardcol {
     max-width: none;
   }
+  .stage-side {
+    display: contents;
+  }
+  .summary {
+    grid-area: summary;
+  }
   /* No fixed column height on a phone: let the panel's content take its natural height */
   .panel {
+    grid-area: panel;
     overflow: visible;
   }
   .tabpanel,
@@ -758,6 +782,27 @@ kbd {
   }
 }
 @media (max-width: 520px) {
+  .hint-desktop,
+  .shortcuts {
+    display: none;
+  }
+  .hint-mobile {
+    display: inline;
+  }
+  .navgroup .icon[aria-label='Start'],
+  .navgroup .icon[aria-label='End'] {
+    display: none;
+  }
+  .navgroup .icon[aria-label='Previous move'] {
+    margin-left: 0;
+    border-radius: var(--r-sm) 0 0 var(--r-sm);
+  }
+  .navgroup .icon[aria-label='Next move'] {
+    border-radius: 0 var(--r-sm) var(--r-sm) 0;
+  }
+  .mobile-explore-back {
+    display: inline-flex;
+  }
   .psum {
     padding: var(--s-3);
   }

@@ -38,12 +38,8 @@ too big for Cloudflare Pages (25 MiB per file) and too big to make every visitor
 
 ## Evidence
 
-- Unit tests: manifest parsing, download with progress, checksum and size rejection, removal, a
-  browser without Cache Storage, worker counts, the CSP change and its refusal of plain HTTP.
-- End-to-end (`apps/web/e2e/full-engine.spec.ts`), against a second build configured for a fixture
-  server on another origin: download, verification, Cache Storage, a review made with the full engine
-  (named in the Report tab), a tampered file refused, the standard build's CSP and settings unchanged,
-  and no CSP violation throughout.
+- At implementation time, automated checks covered manifest parsing, download with progress,
+  checksum and size rejection, Cache Storage, worker counts, and the CSP behavior.
 - Node, one position, 1.5M nodes: lite 479 knps and 127 MB; full 255 knps and 507 MB.
 
 ## Consequences

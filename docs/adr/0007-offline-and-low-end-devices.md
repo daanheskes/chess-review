@@ -53,7 +53,6 @@ invisible to screen readers, and nothing worked without a network.
 - A first visit downloads the whole build (about 1.5 MB compressed) in the background.
 - Hosts must serve `sw.js` from the site root (or the `BASE_PATH`); `_headers` marks it
   `no-cache`. Without a service worker (private windows, blocked) the app works as before.
-- e2e tests block service workers by default, because requests a service worker answers bypass
-  Playwright's request mocks; `e2e/offline.spec.ts` opts in.
+- Browser checks block service workers by default so they exercise the network path directly.
 - Firefox and WebKit are not in the e2e matrix yet: their browser builds could not be downloaded in
   the environment this was written in. The code uses only APIs both support.

@@ -34,8 +34,6 @@ IndexedDB and has no server, so statistics must come from the device.
 
 ## Evidence
 
-- Core tests: time classes, dates, the player's side, per-phase counts, tags of the player's errors
-  only, chronological order, opening and time-control tallies, the empty case.
-- Storage test for listing all reviews; e2e tests for the empty state and for two reviewed games of
-  one player, including switching player.
+- At implementation time, automated checks covered time classes, dates, per-phase counts, error tags,
+  chronological order, opening and time-control tallies, empty storage, and switching players.
 - 40 reviewed games: about 2.5–3 s to compute in headless Chromium; 60 of 166 errors carried a tag.

@@ -18,6 +18,7 @@ import { Chessboard } from 'react-chessboard'
 import { AppHeader } from './AppHeader'
 import { explore, fenOf, lineMoves, play, stepTo, targets, type Exploration } from './explore'
 import { useAsync, useLiveEval } from './hooks'
+import { IconButton } from './icons'
 import { evalText } from './labels'
 import { tacticName, tacticTopic } from './insight-facts'
 import { LEGAL_MOVE_HOVER_COLOR, LegalMoveMarker, SQUARE_MARK_COLOR } from './LegalMoveMarker'
@@ -1002,39 +1003,31 @@ function PuzzleCard({
                   <span>Show best move</span>
                   <kbd aria-hidden="true">B</kbd>
                 </label>
-                <div className="train-analysis-nav" role="group" aria-label="Move through analysis">
-                  <button
-                    type="button"
-                    className="secondary sm"
+                <div className="navgroup" role="group" aria-label="Move through analysis">
+                  <IconButton
+                    label="Start"
                     onClick={() => stepExploration(0)}
                     disabled={continuation.at === 0}
-                  >
-                    Start
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary sm"
+                    d="M6 5v14M18 5l-8 7 8 7z"
+                  />
+                  <IconButton
+                    label="Previous move"
                     onClick={() => stepExploration(continuation.at - 1)}
                     disabled={continuation.at === 0}
-                  >
-                    Previous
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary sm"
+                    d="M15 5l-8 7 8 7z"
+                  />
+                  <IconButton
+                    label="Next move"
                     onClick={() => stepExploration(continuation.at + 1)}
                     disabled={continuation.at === continuation.moves.length}
-                  >
-                    Next
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary sm"
+                    d="M9 5l8 7-8 7z"
+                  />
+                  <IconButton
+                    label="End"
                     onClick={() => stepExploration(continuation.moves.length)}
                     disabled={continuation.at === continuation.moves.length}
-                  >
-                    End
-                  </button>
+                    d="M18 5v14M6 5l8 7-8 7z"
+                  />
                 </div>
                 <p className="nums explore-eval">
                   <b>{thinking || !live ? 'Thinking…' : evalText(live.eval)}</b>
@@ -1081,7 +1074,7 @@ function PuzzleCard({
               </div>
             )}
             <div className="train-actions">
-              <button className="primary" onClick={onNext} autoFocus>
+              <button className="primary" onClick={onNext}>
                 Next puzzle
               </button>
               <a

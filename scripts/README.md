@@ -4,7 +4,7 @@
 | -------------------- | ------------------------------------------------------------------------------------------ |
 | `copy-engine.mjs`    | Copies the Stockfish WASM build into `apps/web/public/engine` (runs before `dev`/`build`). |
 | `build-openings.mjs` | Builds `packages/core/src/data/openings.json` from `data/openings.tsv` (`pnpm data`).      |
-| `serve-dist.mjs`     | Serves `apps/web/dist` with the production headers, for e2e tests and local checks.        |
+| `serve-dist.mjs`     | Serves `apps/web/dist` with the production headers, for screenshots and local checks.      |
 | `review-games.ts`    | Reviews a PGN file with the shipped engine in Node and writes the reviews as JSON lines.   |
 | `explain-corpus.ts`  | Runs the tactic explanations over those reviews and reports coverage; `--print` to audit.  |
 | `tactics-eval.ts`    | Measures the tactic detectors against the theme tags of the Lichess puzzle database.       |
