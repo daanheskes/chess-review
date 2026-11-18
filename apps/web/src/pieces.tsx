@@ -1,4 +1,18 @@
-import { defaultPieces, type PieceRenderObject } from 'react-chessboard'
+import { useId, type ComponentProps } from 'react'
+import { Chessboard, defaultPieces, type PieceRenderObject } from 'react-chessboard'
+
+/** Hidden boards cannot be measured for animations; each visible board also needs a unique ID. */
+export function VisibleChessboard({
+  active,
+  options,
+}: {
+  active: boolean
+  options: ComponentProps<typeof Chessboard>['options']
+}) {
+  const id = useId()
+  const boardId = `board-${Array.from(id, (character) => character.codePointAt(0)!.toString(16)).join('-')}`
+  return active ? <Chessboard options={{ ...options, id: boardId }} /> : null
+}
 
 const PIECE_NAMES: Record<string, string> = {
   K: 'king',

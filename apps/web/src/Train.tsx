@@ -13,7 +13,6 @@ import {
   withPool,
 } from '@chessreview/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Chessboard } from 'react-chessboard'
 import { AppHeader } from './AppHeader'
 import { explore, fenOf, lineMoves, play, stepTo, targets, type Exploration } from './explore'
 import { useAsync, useLiveEval } from './hooks'
@@ -21,7 +20,7 @@ import { IconButton } from './icons'
 import { evalText } from './labels'
 import { mistakePositionsFor, tacticName, tacticTopic } from './insight-facts'
 import { LEGAL_MOVE_HOVER_COLOR, LegalMoveMarker, SQUARE_MARK_COLOR } from './LegalMoveMarker'
-import { NAMED_PIECES, isLight, reducedMotion } from './pieces'
+import { NAMED_PIECES, isLight, reducedMotion, VisibleChessboard } from './pieces'
 import { BOARDS, rememberedPlayer, usePrefs } from './prefs'
 import { moveFromText } from './puzzle-input'
 import { ReviewView } from './Review'
@@ -137,6 +136,7 @@ export function TrainPage({
           ) : (
             <Session
               key={`${player}|${tactic ?? ''}|${perspective ?? ''}`}
+              active={tab === 'puzzles'}
               player={player}
               tactic={tactic}
               perspective={perspective}
@@ -259,6 +259,7 @@ function MistakesPanel({
             me={player}
             initialPly={current.ply}
             embedded
+            active={active}
           />
         </>
       ) : null}
@@ -268,10 +269,12 @@ function MistakesPanel({
 
 /** One player's puzzles: new verified positions appear while the rest are checked. */
 function Session({
+  active,
   player,
   tactic,
   perspective,
 }: {
+  active: boolean
   player: string
   tactic: string | null
   perspective: PuzzlePerspective | null
@@ -418,7 +421,13 @@ function Session({
           {records === null ? (
             <p className="muted">Reading your puzzles…</p>
           ) : current ? (
-            <PuzzleCard key={current.id} record={current} onAnswered={answered} onNext={next} />
+            <PuzzleCard
+              key={current.id}
+              active={active && puzzleTab === 'new'}
+              record={current}
+              onAnswered={answered}
+              onNext={next}
+            />
           ) : tactic !== null && newFocused && newFocused.every((r) => r.puzzle === null) ? (
             searching ? null : (
               <div className="empty">
@@ -476,6 +485,7 @@ function Session({
             </button>
             <PuzzleCard
               key={`replay|${replayRecord.id}`}
+              active={active && puzzleTab === 'completed'}
               record={replayRecord}
               onAnswered={answered}
               onNext={() => setReplayId(null)}
@@ -681,11 +691,13 @@ function PuzzleEvalBar({
 
 /** One puzzle. Keyed by its id, so everything here starts over for the next one. */
 function PuzzleCard({
+  active,
   record,
   onAnswered,
   onNext,
   nextLabel = 'Next puzzle',
 }: {
+  active: boolean
   record: PuzzleRecord
   onAnswered: (record: PuzzleRecord, correct: boolean) => Promise<void>
   onNext: () => void
@@ -1002,7 +1014,8 @@ function PuzzleCard({
           )}
           <div className="board" role="group" aria-label={`Board, ${turn} to move`}>
             <div>
-              <Chessboard
+              <VisibleChessboard
+                active={active}
                 options={{
                   position: fen,
                   boardOrientation: puzzle.color === 'w' ? 'white' : 'black',

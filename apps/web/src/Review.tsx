@@ -16,7 +16,6 @@ import {
   type Side,
 } from '@chessreview/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Chessboard } from 'react-chessboard'
 import { EvalGraph } from './EvalGraph'
 import { explore, fenOf, lineMoves, play, stepTo, targets, type Exploration } from './explore'
 import { cancelReview, downloadReview, useLiveEval, useReviewState } from './hooks'
@@ -24,7 +23,7 @@ import { LEGAL_MOVE_HOVER_COLOR, LegalMoveMarker, SQUARE_MARK_COLOR } from './Le
 import { TimeChart } from './TimeChart'
 import { ERRORS, META, ORDER, evalText, isKeyMoment } from './labels'
 import { BOARDS, usePrefs } from './prefs'
-import { NAMED_PIECES, isLight, reducedMotion } from './pieces'
+import { NAMED_PIECES, isLight, reducedMotion, VisibleChessboard } from './pieces'
 import type { LiveEval } from './services'
 import { AppHeader } from './AppHeader'
 import { IconButton } from './icons'
@@ -97,12 +96,14 @@ export function ReviewView({
   me,
   initialPly = 0,
   embedded = false,
+  active = true,
 }: {
   id: string
   review: Review
   me: string | null
   initialPly?: number
   embedded?: boolean
+  active?: boolean
 }) {
   const mySide: Side | null = !me
     ? null
@@ -321,7 +322,8 @@ export function ReviewView({
                 explore) is hidden from them. Keyboard users step through the game with the move list. */}
               <div className="board" role="group" aria-label={`Board. ${describePosition(fen)}`}>
                 <div>
-                  <Chessboard
+                  <VisibleChessboard
+                    active={active}
                     options={{
                       position: fen,
                       boardOrientation: orientation,
