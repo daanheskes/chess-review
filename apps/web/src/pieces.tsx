@@ -14,7 +14,7 @@ export function VisibleChessboard({
   return active ? <Chessboard options={{ ...options, id: boardId }} /> : null
 }
 
-const PIECE_NAMES: Record<string, string> = {
+export const PIECE_NAMES: Record<string, string> = {
   K: 'king',
   Q: 'queen',
   R: 'rook',

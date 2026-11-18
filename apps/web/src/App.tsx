@@ -7,12 +7,14 @@ import { ReviewPage } from './Review'
 // Insights is a page of its own, loaded only when opened.
 const InsightsPage = lazy(() => import('./Insights').then((m) => ({ default: m.InsightsPage })))
 const TrainPage = lazy(() => import('./Train').then((m) => ({ default: m.TrainPage })))
+const LearnPage = lazy(() => import('./Learn').then((m) => ({ default: m.LearnPage })))
 
 // Routes live in the hash so a reload keeps you on the same review:
 //   #/                      game list
 //   #/review/<id>?u=<name>  one review (u = whose games you were browsing)
 //   #/insights              statistics across every stored review
 //   #/train[?tab=mistakes&tactic=<kind>&p=<side>&u=<name>]  puzzles or recent mistake positions
+//   #/openings[/<opening>[/<line>]]  study and practice opening lines
 function parse(hash: string) {
   const m = hash.match(/^#\/review\/([a-f0-9]+)(?:\?u=(.*))?$/)
   return m && m[1] ? { id: m[1], me: m[2] ? decodeURIComponent(m[2]) : null } : null
@@ -62,6 +64,18 @@ export function App() {
       ) : hash === '#/train' || hash.startsWith('#/train?') ? (
         <Suspense fallback={null}>
           <TrainPage {...trainFocus(hash)} />
+        </Suspense>
+      ) : hash === '#/openings' ||
+        hash.startsWith('#/openings/') ||
+        (!hash && location.pathname.endsWith('/openings')) ? (
+        <Suspense fallback={null}>
+          <LearnPage
+            hash={hash}
+            navigate={(next) => {
+              location.hash = next
+              setHash(location.hash)
+            }}
+          />
         </Suspense>
       ) : route ? (
         <ReviewPage id={route.id} me={route.me} />

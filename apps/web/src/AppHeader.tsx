@@ -1,7 +1,7 @@
 import { BrandMark } from './icons'
 import { Settings } from './Settings'
 
-export type NavKey = 'games' | 'insights' | 'train'
+export type NavKey = 'games' | 'insights' | 'train' | 'openings'
 
 /** The bar at the top of every page: brand, where you can go, and the settings. */
 export function AppHeader({ active }: { active?: NavKey }) {
@@ -20,6 +20,9 @@ export function AppHeader({ active }: { active?: NavKey }) {
         </a>
         <a href="#/train" aria-current={active === 'train' ? 'page' : undefined}>
           Train
+        </a>
+        <a href="#/openings" aria-current={active === 'openings' ? 'page' : undefined}>
+          Openings
         </a>
       </nav>
       <div className="appbar-end">
