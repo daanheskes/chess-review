@@ -13,6 +13,7 @@ import {
   type Engine,
   type Puzzle,
   type PuzzleCandidate,
+  type PuzzleContext,
   type PuzzlePerspective,
   type PuzzleLimits,
   type PuzzleRecord,
@@ -25,7 +26,8 @@ export const PUZZLE_LIMITS: PuzzleLimits = { depth: 18, nodes: 3_000_000 }
 const needsSide = (r: PuzzleRecord) => r.tactic !== null && r.perspective === undefined
 const needsMetadata = (r: PuzzleRecord) =>
   r.puzzle !== null && (typeof r.puzzle.cpLoss !== 'number' || typeof r.puzzle.gambit !== 'boolean')
-const needsBackfill = (r: PuzzleRecord) => needsSide(r) || needsMetadata(r)
+const needsContext = (r: PuzzleRecord) => r.puzzle !== null && r.puzzle.context === undefined
+const needsBackfill = (r: PuzzleRecord) => needsSide(r) || needsMetadata(r) || needsContext(r)
 
 export interface PuzzleDeps {
   store: ReviewStore
@@ -79,7 +81,7 @@ export class PuzzleService {
    */
   private async backfill(todo: readonly PuzzleRecord[]): Promise<void> {
     const sides = new Map<string, PuzzlePerspective | null>()
-    const metadata = new Map<string, { cpLoss: number; gambit: boolean }>()
+    const metadata = new Map<string, { cpLoss: number; gambit: boolean; context: PuzzleContext | null }>()
     const byGame = new Map<string, PuzzleRecord[]>()
     for (const r of todo) {
       if (!r.puzzle) {
@@ -96,12 +98,21 @@ export class PuzzleService {
           if (!stored) return
           for (const r of records) {
             const move = stored.review.moves[r.puzzle!.moveIndex]
+            const previousMove = stored.review.moves[r.puzzle!.moveIndex - 1]
+            const previousFen = stored.review.fens[r.puzzle!.moveIndex - 1]
             if (needsSide(r)) {
               const found = puzzleTactic(explainReviewMove(stored.review, r.puzzle!.moveIndex))
               sides.set(r.id, found.tactic === r.tactic ? found.perspective : null)
             }
             if (move)
-              metadata.set(r.id, { cpLoss: move.cpLoss, gambit: /gambit\b/i.test(stored.review.opening) })
+              metadata.set(r.id, {
+                cpLoss: move.cpLoss,
+                gambit: /gambit\b/i.test(stored.review.opening),
+                context:
+                  previousMove && previousMove.color !== move.color && previousFen
+                    ? { fen: previousFen, uci: previousMove.uci, san: previousMove.san }
+                    : null,
+              })
           }
         } catch (e) {
           console.warn(`Could not backfill puzzle details from game ${gameId}`, e)
