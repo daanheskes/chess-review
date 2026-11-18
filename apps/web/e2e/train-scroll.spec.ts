@@ -152,6 +152,69 @@ test('keeps analysis navigation icon-only and does not scroll when solving', asy
   await expect(navigation.getByRole('button', { name: 'Next move' })).toBeVisible()
 })
 
+test('shows a piece hint without answering and clears it on retry', async ({ page }) => {
+  await withPuzzle(page)
+  await page.goto('/#/train')
+
+  const hint = page.getByRole('button', { name: 'Show hint' })
+  await expect(hint).toBeDisabled()
+  await expect(hint).toBeEnabled()
+  await hint.click()
+  await expect(page.getByRole('status').filter({ hasText: 'Hint: move the piece on h5.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'White queen, h5' }).locator('xpath=..')).toHaveCSS(
+    'box-shadow',
+    'rgb(46, 139, 98) 0px 0px 0px 4px inset',
+  )
+  const hideHint = page.getByRole('button', { name: 'Hide hint' })
+  await expect(hideHint).toHaveAttribute('aria-pressed', 'true')
+  await hideHint.click()
+  await expect(page.getByText('Hint: move the piece on h5.')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'White queen, h5' }).locator('xpath=..')).toHaveCSS(
+    'box-shadow',
+    'none',
+  )
+  await expect(hint).toHaveAttribute('aria-pressed', 'false')
+  await hint.click()
+  await expect(page.getByRole('heading', { name: 'The best move', exact: true })).toHaveCount(0)
+  await expect(page.getByText('0 of 1 today')).toBeVisible()
+
+  await page.getByLabel('Your move').fill('Qxf7#')
+  await page.getByRole('button', { name: 'Check' }).click()
+  await expect(page.getByRole('heading', { name: 'Correct' })).toBeVisible()
+  await expect(page.getByText('Hint: move the piece on h5.')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Retry puzzle' }).click()
+  await expect(page.getByText('Hint: move the piece on h5.')).toHaveCount(0)
+  await expect(hint).toBeEnabled()
+  await page.getByLabel('Your move').fill('Nf3')
+  await page.getByRole('button', { name: 'Check' }).click()
+  await expect(page.getByText(/That is the move you played/)).toBeVisible()
+  await expect(hint).toBeEnabled()
+  await hint.click()
+  await expect(page.getByText('Hint: move the piece on h5.')).toBeVisible()
+})
+
+test('sizes legal move and capture markers relative to their squares', async ({ page }) => {
+  await withPuzzle(page)
+  await page.goto('/#/train')
+  await expect(page.getByLabel('Your move')).toBeEnabled()
+  await page.getByRole('button', { name: 'White queen, h5' }).click()
+
+  const dot = page.locator('.dot-target').first()
+  const capture = page.locator('.dot-capture').first()
+  await expect(dot).toBeVisible()
+  await expect(capture).toBeVisible()
+  const dotSize = await dot.evaluate((el) => ({
+    marker: el.getBoundingClientRect().width,
+    square: el.parentElement!.getBoundingClientRect().width,
+  }))
+  const captureSize = await capture.evaluate((el) => ({
+    marker: el.querySelector('i')!.getBoundingClientRect().width,
+    square: el.getBoundingClientRect().width,
+  }))
+  expect(dotSize.marker / dotSize.square).toBeCloseTo(0.234, 2)
+  expect(captureSize.marker / captureSize.square).toBeCloseTo(0.1875, 2)
+})
+
 test('opens a completed puzzle so it can be solved again', async ({ page }) => {
   await withPuzzle(page, COMPLETED_PUZZLE)
   await page.goto('/#/train')

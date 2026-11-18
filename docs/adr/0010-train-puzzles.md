@@ -37,6 +37,9 @@ moves teaches nothing.
   All attempted puzzles appear in Completed, with the last result and answer history.
 - **Answers by board or keyboard.** Dragging, clicking, or typing a move (`moveFromText` takes SAN or UCI),
   so the page works without a pointer.
+- **Hints identify the piece, not its destination.** Show hint marks and names the solution's starting
+  square without recording an answer; Hide hint removes it again. Retrying or opening another puzzle clears
+  the hint.
 - **A day's set and a focus.** Train counts the puzzles answered since local midnight against what is still
   to ask, up to a soft goal of 10. Insights links each tactic to `#/train?tactic=<kind>&u=<player>`, which
   narrows the puzzles to that tactic and to the side of it (`p=allowed` or `p=missed`) that the row was about. The day start is passed into `today()`, so core needs no clock or zone.

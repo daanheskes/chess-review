@@ -712,6 +712,7 @@ function PuzzleCard({
   const [marked, setMarked] = useState<{ fen: string; squares: string[] } | null>(null)
   const [text, setText] = useState('')
   const [unclear, setUnclear] = useState(false)
+  const [showHint, setShowHint] = useState(false)
   // Only the first answer counts towards progress; retries are practice.
   const recorded = useRef(false)
   const autoplayTimers = useRef<number[]>([])
@@ -868,6 +869,7 @@ function PuzzleCard({
     setMarked(null)
     setText('')
     setUnclear(false)
+    setShowHint(false)
   }
   const gotoLineMove = (index: number) => {
     clearAutoplay()
@@ -1058,6 +1060,7 @@ function PuzzleCard({
                   arrows,
                   squareRenderer: ({ piece, square, children }) => {
                     const hl = lastSquares.includes(square) || square === picked
+                    const hint = showHint && !done && !wrongPreview && square === puzzle.solution.slice(0, 2)
                     const mark = marked?.fen === fen && marked.squares.includes(square)
                     const target = dots.includes(square)
                     const capture = target && piece !== null && piece.pieceType[0] !== sideToMove
@@ -1082,6 +1085,7 @@ function PuzzleCard({
                                   ? sq.hlLight
                                   : sq.hlDark
                                 : undefined,
+                          boxShadow: hint ? `inset 0 0 0 4px ${BEST_ARROW}` : undefined,
                         }}
                         onMouseEnter={() => setHoveredSquare(square)}
                         onMouseLeave={() =>
@@ -1155,6 +1159,7 @@ function PuzzleCard({
           {unclear && (
             <p className="train-error">That is not a legal move here. Write it like Nxd5 or e2e4.</p>
           )}
+          {showHint && !done && <p>Hint: move the piece on {puzzle.solution.slice(0, 2)}.</p>}
         </div>
 
         {!done && (
@@ -1328,16 +1333,21 @@ function PuzzleCard({
             </div>
           </>
         )}
-        {!done && status === 'wrong' && (
+        {!done && (
           <div className="train-actions">
-            <button className="secondary" onClick={reveal} disabled={!contextReady}>
-              Show the answer
+            <button
+              className="ghost"
+              onClick={() => setShowHint((visible) => !visible)}
+              disabled={!contextReady || wrongPreview !== null}
+              aria-pressed={showHint}
+            >
+              {showHint ? 'Hide hint' : 'Show hint'}
             </button>
-          </div>
-        )}
-        {status === 'asking' && (
-          <div className="train-actions">
-            <button className="ghost" onClick={reveal} disabled={!contextReady}>
+            <button
+              className={status === 'wrong' ? 'secondary' : 'ghost'}
+              onClick={reveal}
+              disabled={!contextReady}
+            >
               Show the answer
             </button>
           </div>
