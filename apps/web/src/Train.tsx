@@ -692,8 +692,15 @@ function PuzzleCard({
   nextLabel?: string
 }) {
   const puzzle = record.puzzle!
+  const contextSteps = useMemo(
+    () => (puzzle.context ? replay(puzzle.context.fen, [puzzle.context.uci]) : []),
+    [puzzle.context],
+  )
+  const contextMove = contextSteps[0] ?? null
   const sq = BOARDS[usePrefs().board]
   const [status, setStatus] = useState<Status>('asking')
+  const [contextMovePlayed, setContextMovePlayed] = useState(!contextMove)
+  const [contextReady, setContextReady] = useState(!contextMove)
   const [wrongMove, setWrongMove] = useState<string | null>(null)
   const [wrongPreview, setWrongPreview] = useState<{ uci: string; fen: string } | null>(null)
   const [picked, setPicked] = useState<string | null>(null)
@@ -712,10 +719,21 @@ function PuzzleCard({
 
   const done = status === 'solved' || status === 'shown'
   const lineSteps = useMemo(() => replay(puzzle.fen, puzzle.line), [puzzle])
+  useEffect(() => {
+    if (!contextMove || contextMovePlayed) return
+    const timer = window.setTimeout(() => setContextMovePlayed(true), 650)
+    return () => window.clearTimeout(timer)
+  }, [contextMove, contextMovePlayed])
+  useEffect(() => {
+    if (!contextMove || !contextMovePlayed || contextReady) return
+    const timer = window.setTimeout(() => setContextReady(true), 200)
+    return () => window.clearTimeout(timer)
+  }, [contextMove, contextMovePlayed, contextReady])
   const lineFinished = status === 'solved' && linePly >= lineSteps.length
   const after = lineSteps[0]?.after ?? puzzle.fen
   const lineFen = lineSteps[Math.max(0, linePly - 1)]?.after ?? after
-  const fen = continuation ? fenOf(continuation) : (wrongPreview?.fen ?? (done ? lineFen : puzzle.fen))
+  const askingFen = contextMove && !contextMovePlayed ? contextMove.before : puzzle.fen
+  const fen = continuation ? fenOf(continuation) : (wrongPreview?.fen ?? (done ? lineFen : askingFen))
   const positionCheck = checkStatus(fen)
   const color = COLOR_NAMES[puzzle.color]
   const sideToMove = fen.split(' ')[1] === 'w' ? 'w' : 'b'
@@ -723,7 +741,9 @@ function PuzzleCard({
   const awaitingUserLineMove =
     status === 'solved' && !continuation && !lineFinished && sideToMove === puzzle.color
   const canInteract =
-    wrongPreview === null && (!done || continuation !== null || lineFinished || awaitingUserLineMove)
+    contextReady &&
+    wrongPreview === null &&
+    (!done || continuation !== null || lineFinished || awaitingUserLineMove)
   const dots = canInteract && picked ? targets(fen, picked) : []
   const line = useMemo(() => lineMoves(puzzle.fen, puzzle.line), [puzzle])
 
@@ -755,7 +775,7 @@ function PuzzleCard({
   }
 
   const submit = (uci: string) => {
-    if (done) return
+    if (done || !contextReady) return
     clearWrongPreview()
     clearAutoplay()
     setPicked(null)
@@ -823,6 +843,7 @@ function PuzzleCard({
     return true
   }
   const reveal = () => {
+    if (!contextReady) return
     clearWrongPreview()
     if (!recorded.current) {
       recorded.current = true
@@ -836,6 +857,8 @@ function PuzzleCard({
     clearWrongPreview()
     clearAutoplay()
     setStatus('asking')
+    setContextMovePlayed(!contextMove)
+    setContextReady(!contextMove)
     setWrongMove(null)
     setPicked(null)
     setHoveredSquare(null)
@@ -861,9 +884,13 @@ function PuzzleCard({
   const currentLineIndex = continuation ? -1 : done ? linePly - 1 : -1
   const lastMove = continuation
     ? continuation.moves[continuation.at - 1]
-    : done
-      ? puzzle.line[linePly - 1]
-      : undefined
+    : wrongPreview
+      ? wrongPreview.uci
+      : done
+        ? puzzle.line[linePly - 1]
+        : contextMovePlayed
+          ? contextMove?.uci
+          : undefined
   const lastSquares = lastMove ? [lastMove.slice(0, 2), lastMove.slice(2, 4)] : []
   const when = record.date ? ` on ${record.date}` : ''
   const whiteWin = puzzle.color === 'w' ? puzzle.bestWin : 100 - puzzle.bestWin
@@ -1093,7 +1120,9 @@ function PuzzleCard({
             ? status === 'solved'
               ? 'Correct'
               : 'The best move'
-            : `${color} to move. Find the best move.`}
+            : !contextReady && contextMove
+              ? `Opponent's last move: ${contextMove.san}`
+              : `${color} to move. Find the best move.`}
         </h2>
 
         <PuzzleTrace gameId={record.gameId} moveIndex={puzzle.moveIndex} held={puzzle.winBefore} />
@@ -1104,7 +1133,11 @@ function PuzzleCard({
         )}
 
         <div role="status" className="train-feedback">
-          {status === 'asking' && <p className="muted">Drag a piece, or type your move below.</p>}
+          {status === 'asking' && !contextReady && contextMove ? (
+            <p className="muted">Watch the opponent play {contextMove.san}.</p>
+          ) : status === 'asking' ? (
+            <p className="muted">Drag a piece, or type your move below.</p>
+          ) : null}
           {status === 'wrong' && (
             <p>
               {wrongMove === puzzle.playedUci
@@ -1140,13 +1173,14 @@ function PuzzleCard({
               <input
                 value={text}
                 onChange={(e) => setText(e.target.value)}
+                disabled={!contextReady}
                 autoComplete="off"
                 autoCapitalize="off"
                 spellCheck={false}
                 placeholder="Nxd5"
               />
             </label>
-            <button type="submit" className="secondary">
+            <button type="submit" className="secondary" disabled={!contextReady}>
               Check
             </button>
           </form>
@@ -1296,14 +1330,14 @@ function PuzzleCard({
         )}
         {!done && status === 'wrong' && (
           <div className="train-actions">
-            <button className="secondary" onClick={reveal}>
+            <button className="secondary" onClick={reveal} disabled={!contextReady}>
               Show the answer
             </button>
           </div>
         )}
         {status === 'asking' && (
           <div className="train-actions">
-            <button className="ghost" onClick={reveal}>
+            <button className="ghost" onClick={reveal} disabled={!contextReady}>
               Show the answer
             </button>
           </div>

@@ -15,6 +15,11 @@ const PUZZLE = {
   puzzle: {
     moveIndex: 6,
     fen: 'r1bqkbnr/ppp2ppp/2np4/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 0 4',
+    context: {
+      fen: 'r1bqkbnr/pppp1ppp/2n5/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR b KQkq - 2 3',
+      uci: 'd7d6',
+      san: 'd6',
+    },
     color: 'w',
     solution: 'h5f7',
     solutionSan: 'Qxf7#',
@@ -98,6 +103,27 @@ test('keeps analysis navigation icon-only and does not scroll when solving', asy
   await withPuzzle(page)
   await page.goto('/#/train')
   await expect(page.getByRole('tab', { name: 'New puzzles' })).toHaveAttribute('aria-selected', 'true')
+  const board = page.getByRole('group', { name: 'Board, Black to move' })
+  await expect(board).toBeVisible()
+  await expect(page.getByRole('heading', { name: "Opponent's last move: d6" })).toBeVisible()
+  await expect(page.getByLabel('Your move')).toBeDisabled()
+  await expect(page.getByRole('group', { name: 'Board, White to move' })).toBeVisible()
+  await expect(page.getByLabel('Your move')).toBeEnabled()
+  await expect(page.getByRole('button', { name: 'Black pawn, d6' }).locator('xpath=..')).toHaveCSS(
+    'background-color',
+    'rgb(201, 183, 76)',
+  )
+  const highlightedSquares = await page
+    .locator('.board')
+    .evaluate(
+      (board) =>
+        [...board.querySelectorAll<HTMLElement>('*')].filter(
+          (element) =>
+            element.style.backgroundColor === 'rgb(201, 183, 76)' ||
+            element.style.backgroundColor === 'rgb(241, 226, 124)',
+        ).length,
+    )
+  expect(highlightedSquares).toBe(2)
   await expect(page.getByRole('tab', { name: 'Puzzle category' })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: 'Misses' })).toHaveCount(0)
   await expect(page.getByRole('tab', { name: 'Positional mistakes' })).toHaveCount(0)

@@ -22,6 +22,8 @@ export interface PuzzleCandidate {
   /** Index of the move in `review.moves`; the position is `review.fens[moveIndex]`. */
   moveIndex: number
   fen: string
+  /** The opponent's last move, from the position just before it. */
+  context: PuzzleContext | null
   /** Who has to find the move. */
   color: Color
   /** The engine's best move (UCI) and the line behind it, starting with that move. */
@@ -40,6 +42,12 @@ export interface PuzzleCandidate {
   phase: Phase
   /** Whether the game's named opening is a known gambit. */
   gambit: boolean
+}
+
+export interface PuzzleContext {
+  fen: string
+  uci: string
+  san: string
 }
 
 /** Puzzle kinds retained in storage; `hit` only appears in records from older versions. */
@@ -64,11 +72,17 @@ export function puzzleCandidates(review: Review, side: Side): PuzzleCandidate[] 
     if (!regularMiss && !openingMiss) return
     const fen = review.fens[i]
     if (!fen || turnOf(fen) !== color) return
+    const previousMove = review.moves[i - 1]
+    const previousFen = review.fens[i - 1]
     const line = review.lines[i] ?? []
     out.push({
       kind: 'miss',
       moveIndex: i,
       fen,
+      context:
+        previousMove && previousMove.color !== color && previousFen
+          ? { fen: previousFen, uci: previousMove.uci, san: previousMove.san }
+          : null,
       color,
       solution: m.bestUci,
       solutionSan: m.bestSan,
@@ -102,7 +116,9 @@ export const PUZZLE_MIN_GAP = 20
 /** ...and has to leave the player at least this well off: a puzzle is not "lose slowly". */
 export const PUZZLE_MIN_BEST_WIN = 35
 
-export interface Puzzle extends PuzzleCandidate {
+export interface Puzzle extends Omit<PuzzleCandidate, 'context'> {
+  /** Older saved puzzles may not have the opponent's last move. */
+  context?: PuzzleContext | null
   /** Win chance (%) after the best move, and its lead over the best other move, at puzzle depth. */
   bestWin: number
   gap: number
