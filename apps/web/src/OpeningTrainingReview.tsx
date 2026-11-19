@@ -32,6 +32,7 @@ export function OpeningTrainingReview({
   result,
   nextLevel,
   startDisabled,
+  needsLichess,
   onStart,
 }: {
   initialFen: string
@@ -42,6 +43,7 @@ export function OpeningTrainingReview({
   result: string
   nextLevel: string
   startDisabled: boolean
+  needsLichess: boolean
   onStart: () => void
 }) {
   const steps = useMemo(() => {
@@ -61,6 +63,15 @@ export function OpeningTrainingReview({
         uci: move.uci,
       })
     })
+    for (const error of errors.filter((item) => item.ply === moves.length)) {
+      const [, turn, , , , number] = error.fenBefore.split(' ')
+      result.push({
+        fen: error.fenAfter,
+        label: `${number}${turn === 'w' ? '.' : '…'} ${error.san}`,
+        uci: error.uci,
+        error,
+      })
+    }
     return result
   }, [errors, initialFen, moves])
   const [index, setIndex] = useState(steps.length - 1)
@@ -230,7 +241,7 @@ export function OpeningTrainingReview({
         <div className="learn-result">
           <p role="status">{result}</p>
           <button type="button" className="cta" disabled={startDisabled} onClick={onStart}>
-            Start {nextLevel}
+            {needsLichess ? 'Connect Lichess to continue' : `Start ${nextLevel}`}
           </button>
         </div>
         <div>

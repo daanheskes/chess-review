@@ -35,6 +35,18 @@ export function ratingGroupForLevel(level: ExplorerLevel): number {
   return OPENING_RATING_GROUPS[level]
 }
 
+function standardUci(move: ExplorerMove): string {
+  // Explorer encodes castling as king-to-rook even in standard chess.
+  if (/^O-O[+#]?$/.test(move.san)) {
+    if (move.uci === 'e1h1') return 'e1g1'
+    if (move.uci === 'e8h8') return 'e8g8'
+  } else if (/^O-O-O[+#]?$/.test(move.san)) {
+    if (move.uci === 'e1a1') return 'e1c1'
+    if (move.uci === 'e8a8') return 'e8c8'
+  }
+  return move.uci
+}
+
 export async function fetchOpeningMove(
   fen: string,
   rating: number,
@@ -123,7 +135,7 @@ export async function fetchOpeningMove(
   const eligibleTotal = eligible.reduce((sum, move) => sum + move.count, 0)
   let choice = random() * eligibleTotal
   for (const move of eligible) {
-    if (choice < move.count) return { uci: move.uci, san: move.san }
+    if (choice < move.count) return { uci: standardUci(move), san: move.san }
     choice -= move.count
   }
   throw new LichessExplorerError('invalid-response', 'Could not select a Lichess opening move.')

@@ -103,8 +103,8 @@
 }
 .wrong-move-marker {
   position: absolute;
-  top: -7px;
-  right: -7px;
+  top: 2px;
+  right: 2px;
   z-index: 5;
   display: grid;
   width: 22px;

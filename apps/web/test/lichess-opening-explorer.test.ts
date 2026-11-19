@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
+import { sanOf } from '@chessreview/core'
+import { explore, fenOf, play } from '../src/explore'
 import {
   fetchOpeningMove,
   LichessExplorerError,
@@ -43,6 +45,38 @@ describe('Lichess opening explorer', () => {
   it('returns no move when Lichess has no games in the selected group', async () => {
     const fetchImpl = vi.fn<typeof fetch>().mockResolvedValue(new Response('{"moves":[]}', { status: 200 }))
     await expect(fetchOpeningMove('fen', 0, 'token', undefined, fetchImpl)).resolves.toBeNull()
+  })
+
+  it.each([
+    ['w', 'e1h1', 'e1g1', 'O-O'],
+    ['w', 'e1a1', 'e1c1', 'O-O-O'],
+    ['b', 'e8h8', 'e8g8', 'O-O'],
+    ['b', 'e8a8', 'e8c8', 'O-O-O'],
+  ])('converts and plays %s castling from Explorer UCI %s', async (turn, explorerUci, uci, san) => {
+    const fen = `r3k2r/8/8/8/8/8/8/R3K2R ${turn} KQkq - 0 1`
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ moves: [{ uci: explorerUci, san, white: 1, draws: 0, black: 0 }] })),
+      )
+    const move = await fetchOpeningMove(fen, 0, 'token', undefined, fetchImpl)
+    expect(move).toEqual({ uci, san })
+    const next = play(explore(fen), uci.slice(0, 2), uci.slice(2, 4))
+    expect(next).not.toBeNull()
+    expect(sanOf(fen, uci)).toBe(san)
+    expect(fenOf(next!)).not.toBe(fen)
+  })
+
+  it('does not convert an unrelated king-to-rook move', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ moves: [{ uci: 'e1h1', san: 'Kh1', white: 1, draws: 0, black: 0 }] })),
+      )
+    await expect(fetchOpeningMove('fen', 0, 'token', undefined, fetchImpl)).resolves.toEqual({
+      uci: 'e1h1',
+      san: 'Kh1',
+    })
   })
 
   it('excludes moves below 5%, includes exactly 5%, and weights the remainder by frequency', async () => {

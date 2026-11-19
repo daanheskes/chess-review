@@ -113,7 +113,7 @@
 .learn-line-preview {
   position: relative;
   z-index: 1;
-  width: min(100%, 220px);
+  width: 100%;
 }
 .learn-line-actions {
   display: flex;
@@ -388,6 +388,26 @@
 .learn-level > div span {
   color: var(--ink-2);
 }
+.learn-level-badge.beginner {
+  color: var(--won);
+  background: var(--won-bg);
+}
+.learn-level-badge.club {
+  color: light-dark(#174a89, #b6d2ff);
+  background: light-dark(#e1edff, #182f4b);
+}
+.learn-level-badge.expert {
+  color: light-dark(#813b12, #ffd2ad);
+  background: light-dark(#ffead9, #4a2918);
+}
+.learn-level-badge.im {
+  color: #f5eaff;
+  background: #593585;
+}
+.learn-level-badge.gm {
+  color: #241700;
+  background: #eebc39;
+}
 .learn-level progress {
   appearance: none;
   width: 100%;
@@ -418,6 +438,9 @@
 .learn-lichess p {
   flex-basis: 100%;
   margin: 0;
+}
+.learn-lichess-session {
+  margin-top: var(--s-7);
 }
 .learn-piece-hint {
   position: absolute;

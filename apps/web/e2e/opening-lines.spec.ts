@@ -88,8 +88,146 @@ test('unlocks the first Lichess level from saved level-three mastery and require
   await page.reload()
 
   await expect(page.getByLabel('Training level').getByText('Level 4', { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Connect Lichess' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Start Level 4' })).toBeDisabled()
+  await expect(page.getByLabel('Training level')).toContainText('Lichess Rapid ratings 0–999.')
+  await expect(page.getByText('the closest available group', { exact: false })).toHaveCount(0)
+  await expect(page.getByText('After this variation, play', { exact: false })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Connect Lichess', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Connect Lichess to continue' })).toBeEnabled()
+  await page.route('https://lichess.org/oauth**', (route) => route.fulfill({ status: 200, body: 'OAuth' }))
+  const authorization = page.waitForRequest('https://lichess.org/oauth**')
+  await page.getByRole('button', { name: 'Connect Lichess to continue' }).click()
+  expect(new URL((await authorization).url()).searchParams.get('response_type')).toBe('code')
+})
+
+test('offers a hint after consecutive errors and reviews an unfinished attempt on giving up', async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/#/openings/ponziani-opening/ponziani-opening-jaenisch-counterattack-1jjacgq?side=w')
+  await page.evaluate(() =>
+    localStorage.setItem(
+      'chessreview.opening-levels',
+      JSON.stringify([
+        {
+          id: 'C44\tPonziani Opening: Jaenisch Counterattack\t1. e4 e5 2. Nf3 Nc6 3. c3 Nf6',
+          side: 'w',
+          level: 3,
+          mastered: false,
+        },
+      ]),
+    ),
+  )
+  await page.reload()
+  await page.clock.install()
+  await page.clock.pauseAt(new Date())
+  await page.getByRole('button', { name: 'Start Level 3' }).click()
+  const wrongMove = async (piece: string, target: string) => {
+    await page.getByRole('button', { name: piece }).click()
+    await page.locator(`[data-square="${target}"]`).click()
+    await expect(page.getByRole('img', { name: 'Incorrect move' })).toBeVisible()
+    await page.clock.runFor(50)
+    await page.clock.runFor(1000)
+    await page.clock.runFor(50)
+    await expect(page.getByRole('button', { name: piece })).toBeEnabled()
+  }
+  await wrongMove('White pawn, d2', 'd4')
+  await expect(page.getByRole('button', { name: 'Show hint' })).toHaveCount(0)
+  await wrongMove('White pawn, c2', 'c4')
+  await expect(page.getByRole('button', { name: 'Show hint' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Show hint' }).click()
+  await expect(page.getByText('Hint: e2 to e4.')).toBeVisible()
+  await page.getByRole('button', { name: 'White pawn, e2' }).click()
+  await page.locator('[data-square="e4"]').click()
+  await expect(page.getByText('Opponent plays…')).toBeVisible()
+  await page.clock.runFor(650)
+  await page.clock.runFor(50)
+  await expect(page.getByRole('button', { name: 'Black pawn, e5' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show hint' })).toHaveCount(0)
+  await expect(page.getByText('Hint: e2 to e4.')).toHaveCount(0)
+  await wrongMove('White knight, b1', 'c3')
+  await wrongMove('White knight, b1', 'a3')
+  await expect(page.getByRole('button', { name: 'Show hint' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Give up' })).toHaveCount(0)
+  await wrongMove('White pawn, d2', 'd4')
+  await expect(page.getByRole('button', { name: 'Restart' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Give up' }).click()
+  await expect(page.getByText('You gave up. Your level dropped.')).toBeVisible()
+  await expect(page.getByLabel('Training level').getByText('Level 2', { exact: true })).toBeVisible()
+  const moves = page.getByLabel('Practice moves')
+  await expect(moves.getByRole('button', { name: '2. Nc3 (Incorrect move)' })).toBeVisible()
+  await expect(moves.getByRole('button', { name: '2. Na3 (Incorrect move)' })).toBeVisible()
+  await expect(moves.getByRole('button', { name: '2. d4 (Incorrect move)' })).toBeVisible()
+  await expect(moves.getByRole('button', { name: '2. Nf3', exact: true })).toHaveCount(0)
+  const statistics = page.getByLabel('Training statistics')
+  await expect(statistics.locator('.tile').filter({ hasText: 'Completed attempts' })).toContainText('0')
+  await expect(statistics.locator('.tile').filter({ hasText: 'Errors' })).toContainText('5')
+})
+
+test('giving up after the variation reviews the rejected moves and lowers the level', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.route('**/engine/stockfish-19-lite-single.js', (route) =>
+    route.fulfill({
+      contentType: 'text/javascript',
+      body: `
+        let fen = '';
+        self.onmessage = ({ data }) => {
+          if (data === 'uci') postMessage('uciok');
+          else if (data === 'isready') postMessage('readyok');
+          else if (data.startsWith('position fen ')) fen = data.slice(13);
+          else if (data.startsWith('go ')) {
+            const score = fen.split(' ')[0].split('/')[5].endsWith('P') ? 80 : 0;
+            const best = fen.split(' ')[1] === 'b' ? 'd7d5' : 'd2d4';
+            postMessage('info depth 14 nodes 400000 score cp ' + score + ' pv ' + best);
+            postMessage('bestmove ' + best);
+          }
+        };
+      `,
+    }),
+  )
+  await page.goto('/#/openings/ponziani-opening/ponziani-opening-jaenisch-counterattack-1jjacgq?side=w')
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'chessreview.opening-levels',
+      JSON.stringify([
+        {
+          id: 'C44\tPonziani Opening: Jaenisch Counterattack\t1. e4 e5 2. Nf3 Nc6 3. c3 Nf6',
+          side: 'w',
+          level: 4,
+          mastered: false,
+        },
+      ]),
+    )
+    sessionStorage.setItem('chessreview.lichess-token', 'test-token')
+  })
+  await page.reload()
+  await page.getByRole('button', { name: 'Start Level 4' }).click()
+  for (const [piece, target, reply] of [
+    ['White pawn, e2', 'e4', 'Black pawn, e5'],
+    ['White knight, g1', 'f3', 'Black knight, c6'],
+    ['White pawn, c2', 'c3', 'Black knight, f6'],
+  ]) {
+    await page.getByRole('button', { name: piece }).click()
+    await page.locator(`[data-square="${target}"]`).click()
+    await expect(page.getByRole('button', { name: reply })).toBeVisible()
+  }
+  for (let count = 0; count < 3; count++) {
+    await page.getByRole('button', { name: 'White pawn, h2' }).click()
+    await page.locator('[data-square="h3"]').click()
+    await expect(
+      page.getByText('Inaccuracy taken back. Try again; your level will drop after this run.'),
+    ).toBeVisible()
+    await expect(page.getByRole('button', { name: 'White pawn, h2' })).toBeEnabled()
+    if (count === 1) {
+      await page.getByRole('button', { name: 'Show hint' }).click()
+      await expect(page.getByText('Hint: d2 to d4.')).toBeVisible()
+    }
+  }
+  await page.getByRole('button', { name: 'Give up' }).click()
+  await expect(page.getByLabel('Training level').getByText('Level 3', { exact: true })).toBeVisible()
+  await expect(
+    page.getByLabel('Practice moves').getByRole('button', { name: '4. h3 (Inaccuracy)' }),
+  ).toHaveCount(3)
+  await expect(page.getByRole('link', { name: 'Revoke access on Lichess' })).toBeVisible()
 })
 
 test('shows incorrect moves before taking them back and delays the fixed reply', async ({ page }) => {
@@ -132,10 +270,8 @@ test('shows incorrect moves before taking them back and delays the fixed reply',
   await expect(page.getByRole('button', { name: 'Black pawn, e5' })).toBeVisible()
 })
 
-for (const evaluation of ['fast', 'slow'] as const) {
-  test(`shows a Stockfish-checked move immediately and waits for ${evaluation} evaluation and delay`, async ({
-    page,
-  }) => {
+for (const evaluation of ['fast', 'slow', 'accepted', 'restart'] as const) {
+  test(`shows a move immediately during ${evaluation} Stockfish evaluation`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.route('**/engine/stockfish-19-lite-single.js', (route) =>
       route.fulfill({
@@ -145,7 +281,7 @@ for (const evaluation of ['fast', 'slow'] as const) {
           const channel = new BroadcastChannel('opening-engine-test');
           const respond = () => {
             const ranks = fen.split(' ')[0].split('/');
-            const score = ranks[5].endsWith('P') ? 80 : 0;
+            const score = ${evaluation === 'accepted' ? '0' : "ranks[5].endsWith('P') ? 80 : 0"};
             const best = fen.split(' ')[1] === 'b' ? 'd7d5' : 'd2d4';
             postMessage('info depth 14 nodes 400000 score cp ' + score + ' pv ' + best);
             postMessage('bestmove ' + best);
@@ -164,6 +300,18 @@ for (const evaluation of ['fast', 'slow'] as const) {
             }
           };
         `,
+      }),
+    )
+    await page.route('https://explorer.lichess.org/**', (route) =>
+      route.fulfill({
+        status: 200,
+        headers: {
+          'access-control-allow-origin': '*',
+          'access-control-allow-methods': 'GET, OPTIONS',
+          'access-control-allow-headers': 'authorization',
+          'content-type': 'application/json',
+        },
+        body: '{"moves":[]}',
       }),
     )
     await page.goto('/#/openings/ponziani-opening/ponziani-opening-jaenisch-counterattack-1jjacgq?side=w')
@@ -212,24 +360,37 @@ for (const evaluation of ['fast', 'slow'] as const) {
     await waiting
     await page.clock.runFor(50)
     await expect(page.getByRole('button', { name: 'White pawn, h3' })).toBeVisible()
+    await expect(page.getByRole('img', { name: 'Incorrect move' })).toHaveCount(0)
     await expect(page.getByText('Stockfish is evaluating your move…')).toBeVisible()
+
+    if (evaluation === 'restart') {
+      await page.getByRole('button', { name: 'Restart' }).click()
+      await page.clock.runFor(50)
+      await expect(page.getByRole('button', { name: 'White pawn, h2' })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'White pawn, e2' })).toBeVisible()
+      await expect(page.getByRole('img', { name: 'Incorrect move' })).toHaveCount(0)
+      await expect(page.getByRole('button', { name: 'Start Level 4' })).toBeVisible()
+      return
+    }
 
     if (evaluation === 'slow') {
       await page.clock.runFor(950)
       await expect(page.getByRole('button', { name: 'White pawn, h3' })).toBeVisible()
+      await expect(page.getByRole('img', { name: 'Incorrect move' })).toHaveCount(0)
     }
     const completed = page.evaluate(
-      () =>
+      (expected) =>
         new Promise<void>((resolve) => {
           const channel = new BroadcastChannel('opening-engine-test')
           let count = 0
           channel.onmessage = ({ data }) => {
-            if (data === 'done' && ++count === 3) {
+            if (data === 'done' && ++count === expected) {
               channel.close()
               resolve()
             }
           }
         }),
+      evaluation === 'accepted' ? 2 : 3,
     )
     await page.evaluate(() => {
       const channel = new BroadcastChannel('opening-engine-test')
@@ -237,21 +398,40 @@ for (const evaluation of ['fast', 'slow'] as const) {
       channel.close()
     })
     await completed
-    if (evaluation === 'fast') {
-      await page.clock.runFor(949)
+    if (evaluation === 'accepted') {
+      await expect(page.getByText('After the variation: 1 of 2 good moves')).toBeVisible()
       await expect(page.getByRole('button', { name: 'White pawn, h3' })).toBeVisible()
-      await page.clock.runFor(1)
+      await expect(page.getByRole('img', { name: 'Incorrect move' })).toHaveCount(0)
+      return
     }
+    await expect(page.getByText('Inaccuracy. Taking your move back…')).toBeVisible()
+    await expect(page.getByRole('button', { name: 'White pawn, h3' })).toBeVisible()
+    const marker = page.getByRole('img', { name: 'Incorrect move' })
+    await expect(marker).toBeVisible()
+    const markerBox = await marker.boundingBox()
+    const squareBox = await page.locator('[data-square="h3"]').boundingBox()
+    expect(markerBox).not.toBeNull()
+    expect(squareBox).not.toBeNull()
+    expect(markerBox!.x).toBeGreaterThanOrEqual(squareBox!.x)
+    expect(markerBox!.y).toBeGreaterThanOrEqual(squareBox!.y)
+    expect(markerBox!.x + markerBox!.width).toBeLessThanOrEqual(squareBox!.x + squareBox!.width)
+    expect(markerBox!.y + markerBox!.height).toBeLessThanOrEqual(squareBox!.y + squareBox!.height)
+    await page.clock.runFor(299)
+    await expect(page.getByRole('button', { name: 'White pawn, h3' })).toBeVisible()
+    await expect(marker).toBeVisible()
+    await page.clock.runFor(1)
+    await expect(marker).toHaveCount(0)
+    await page.clock.runFor(50)
+    await expect(page.getByRole('button', { name: 'White pawn, h2' })).toBeEnabled()
     await expect(
       page.getByText('Inaccuracy taken back. Try again; your level will drop after this run.'),
     ).toBeVisible()
-    await page.clock.runFor(50)
-    await expect(page.getByRole('button', { name: 'White pawn, h2' })).toBeEnabled()
   })
 }
 
 test('requires one more good move at each higher Lichess level', async ({ page }) => {
   await page.goto('/#/openings/ponziani-opening/ponziani-opening-jaenisch-counterattack-1jjacgq?side=w')
+  await page.evaluate(() => sessionStorage.setItem('chessreview.lichess-token', 'test-token'))
   for (const [level, moves] of [
     [8, 6],
     [11, 9],
@@ -271,6 +451,17 @@ test('requires one more good move at each higher Lichess level', async ({ page }
       )
     }, level)
     await page.reload()
+    const levelName = level === 11 ? 'IM Level' : level === 12 ? 'GM Level' : `Level ${level}`
+    await page.getByRole('button', { name: `Start ${levelName}` }).click()
+    for (const [piece, target, reply] of [
+      ['White pawn, e2', 'e4', 'Black pawn, e5'],
+      ['White knight, g1', 'f3', 'Black knight, c6'],
+      ['White pawn, c2', 'c3', 'Black knight, f6'],
+    ]) {
+      await page.getByRole('button', { name: piece }).click()
+      await page.locator(`[data-square="${target}"]`).click()
+      await expect(page.getByRole('button', { name: reply })).toBeVisible()
+    }
     await expect(page.getByText(`After the variation: 0 of ${moves} good moves`)).toBeVisible()
     await expect(page.getByLabel('Progress after the variation')).toHaveJSProperty('max', moves)
   }
@@ -339,17 +530,38 @@ test('takes back inaccurate and bad moves, allows retry, and drops a level only 
     sessionStorage.setItem('chessreview.lichess-token', 'test-token')
   })
   await page.reload()
+  const sessionControls = page.locator('.learn-lichess-session')
+  await expect(sessionControls.getByRole('link', { name: 'Revoke access on Lichess' })).toBeVisible()
+  expect(
+    await sessionControls.evaluate((element) =>
+      Boolean(element.previousElementSibling?.matches('[aria-label="Training statistics"]')),
+    ),
+  ).toBe(true)
+  await expect(page.getByText('Variation: 0 of 6 moves played')).toBeVisible()
+  await expect(page.getByLabel('Variation progress')).toHaveJSProperty('value', 0)
+  await expect(page.getByLabel('Variation progress')).toHaveJSProperty('max', 6)
+  await expect(page.getByLabel('Progress after the variation')).toHaveCount(0)
+  await expect(page.getByText('After the variation:', { exact: false })).toHaveCount(0)
   await page.getByRole('button', { name: 'Start Level 4' }).click()
-  for (const [piece, target, reply] of [
-    ['White pawn, e2', 'e4', 'Black pawn, e5'],
-    ['White knight, g1', 'f3', 'Black knight, c6'],
-    ['White pawn, c2', 'c3', 'Black knight, f6'],
-  ]) {
+  for (const [piece, target, reply, played] of [
+    ['White pawn, e2', 'e4', 'Black pawn, e5', 2],
+    ['White knight, g1', 'f3', 'Black knight, c6', 4],
+    ['White pawn, c2', 'c3', 'Black knight, f6', 6],
+  ] as const) {
     await page.getByRole('button', { name: piece }).click()
     await page.locator(`[data-square="${target}"]`).click()
     await expect(page.getByRole('button', { name: reply })).toBeVisible()
+    if (played < 6) {
+      await expect(page.getByText(`Variation: ${played} of 6 moves played`)).toBeVisible()
+      await expect(page.getByLabel('Variation progress')).toHaveJSProperty('value', played)
+      await expect(page.getByLabel('Progress after the variation')).toHaveCount(0)
+    }
   }
 
+  await expect(page.getByText('Variation complete ✓')).toBeVisible()
+  await expect(page.getByLabel('Variation progress')).toHaveCount(0)
+  await expect(page.getByText('After the variation: 0 of 2 good moves')).toBeVisible()
+  await expect(page.getByLabel('Progress after the variation')).toHaveJSProperty('value', 0)
   await page.getByRole('button', { name: 'White pawn, h2' }).click()
   await page.locator('[data-square="h3"]').click()
   await expect(page.getByRole('button', { name: 'White pawn, h3' })).toBeVisible()
@@ -364,11 +576,14 @@ test('takes back inaccurate and bad moves, allows retry, and drops a level only 
   await page.locator('[data-square="a4"]').click()
   await expect(page.getByText('Stockfish rejected that move. Try again.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'White queen, d1' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Show hint' }).click()
+  await expect(page.getByText('Hint: a2 to a3.')).toBeVisible()
 
   await page.getByRole('button', { name: 'White pawn, d2' }).click()
   await page.locator('[data-square="d4"]').click()
   await expect(page.getByRole('alert')).toContainText('HTTP 503')
   await expect(page.getByText('After the variation: 1 of 2 good moves')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Show hint' })).toHaveCount(0)
   await expect(page.getByLabel('Progress after the variation')).toHaveJSProperty('value', 1)
   await page.getByRole('button', { name: 'Retry Lichess' }).click()
   await expect(page.getByRole('button', { name: 'Black pawn, d5' })).toBeVisible()
@@ -377,7 +592,7 @@ test('takes back inaccurate and bad moves, allows retry, and drops a level only 
   await page.locator('[data-square="b5"]').click()
   await expect(page.locator('.stage-side').getByText('Level completed with mistakes.')).toBeVisible()
   await expect(page.locator('.stage-side').getByRole('button', { name: 'Start Level 3' })).toBeVisible()
-  await expect(page.getByLabel('Training level')).toContainText('Level 3 of 3')
+  await expect(page.getByLabel('Training level').getByText('Level 3', { exact: true })).toBeVisible()
   await expect(
     page.getByRole('heading', { name: 'Review · Ponziani Opening: Jaenisch Counterattack' }),
   ).toBeVisible()

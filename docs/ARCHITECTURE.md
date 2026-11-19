@@ -186,9 +186,15 @@ any error lowers the next level after the run. After the variation, the user mus
 at level 4, increasing by one per level to 10 at GM. A position without Explorer
 continuations or an early game end cannot complete a level.
 
-Moves awaiting Stockfish appear immediately; rejected moves remain visible until both the evaluation
-and a one-second minimum have finished. Fixed and Explorer replies
-wait at least 650 ms. After a completed attempt, the opening board becomes a move-by-move review. Incorrect attempts are
+Moves appear immediately while Stockfish evaluates them. When Stockfish rejects a move, an error
+marker is shown for 300 ms before the move is taken back; mistakes in the fixed line remain visible
+for one second. Fixed and Explorer replies wait at least 650 ms.
+Two consecutive rejected moves unlock an optional hint for the current position; a third unlocks
+giving up, which lowers the level and opens a review of the moves and errors actually played.
+The hint uses the fixed variation move or the best move from the rejected move's engine analysis.
+Giving up records the errors but does not count as a completed attempt or overwrite practice progress.
+Explorer's king-to-rook castling notation is converted to standard UCI before validation and playback.
+After a completed attempt, the opening board becomes a move-by-move review. Incorrect attempts are
 shown on the board, and users can explore continuations before returning to the opening. The existing
 live Stockfish analysis supplies the evaluation bar and best-move arrow; rejected moves use the same
 classification as game reviews, including missed chances after an opponent error. The level record

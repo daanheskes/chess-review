@@ -69,6 +69,7 @@ const LEVEL_KEY = 'chessreview.opening-levels'
 const PLAYBACK_DELAY = 1200
 const OPPONENT_DELAY = 650
 const WRONG_MOVE_DELAY = 1000
+const ENGINE_WRONG_MOVE_DELAY = 300
 
 function waitForDelay(duration: number, signal: AbortSignal): Promise<boolean> {
   if (signal.aborted) return Promise.resolve(false)
@@ -363,6 +364,7 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
     nextLevel: TrainingLevel,
     mastered: boolean,
     attemptErrors?: number,
+    attemptCompleted = true,
   ) => {
     if (levels.error) return false
     const previous = levels.entries.find((entry) => entry.id === id && entry.side === practiceSide)
@@ -371,7 +373,7 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
         previous?.stats?.highestLevel ?? previous?.level ?? 0,
         nextLevel,
       ) as TrainingLevel,
-      attempts: (previous?.stats?.attempts ?? 0) + (attemptErrors === undefined ? 0 : 1),
+      attempts: (previous?.stats?.attempts ?? 0) + (attemptErrors === undefined || !attemptCompleted ? 0 : 1),
       errors: (previous?.stats?.errors ?? 0) + (attemptErrors ?? 0),
     }
     const entries = [
@@ -1078,6 +1080,7 @@ function OpeningBoard({
     level: TrainingLevel,
     mastered: boolean,
     attemptErrors?: number,
+    attemptCompleted?: boolean,
   ) => boolean
   onComplete: (id: string, side: Side, correct: number, total: number) => void
   onAdvance: (id: string, side: Side, done: number, total: number) => void
@@ -1090,9 +1093,12 @@ function OpeningBoard({
   const [result, setResult] = useState('')
   const [ply, setPly] = useState(0)
   const [picked, setPicked] = useState<string | null>(null)
-  const [wrong, setWrong] = useState<{ fen: string; uci: string } | null>(null)
+  const [wrong, setWrong] = useState<{ fen: string; uci: string; delay: number } | null>(null)
   const [pendingMove, setPendingMove] = useState<{ fen: string; uci: string } | null>(null)
   const [attempt, setAttempt] = useState<'wrong' | 'inaccurate' | null>(null)
+  const [consecutiveErrors, setConsecutiveErrors] = useState(0)
+  const [hintRevealed, setHintRevealed] = useState(false)
+  const [engineHint, setEngineHint] = useState<string | undefined>()
   const [missedPlies, setMissedPlies] = useState<number[]>([])
   const [errors, setErrors] = useState<OpeningAttemptError[]>([])
   const [extraMoves, setExtraMoves] = useState<typeof game.moves>([])
@@ -1123,7 +1129,7 @@ function OpeningBoard({
   const extraPlayed = extraMoves.filter((move) => move.color === side).length
   const extraRequired = level >= 4 ? requiredOpeningMoves(level as ExplorerLevel) : 0
   const finished = level < 4 && ply >= allMoves.length
-  const fen = pendingMove?.fen ?? wrong?.fen ?? allFens[ply]!
+  const fen = wrong?.fen ?? pendingMove?.fen ?? allFens[ply]!
   const sideToMove = fen.split(' ')[1] === 'b' ? 'b' : 'w'
   const opponentTurn = phase === 'playing' && level > 0 && !finished && sideToMove !== side
   const canPlay =
@@ -1134,27 +1140,29 @@ function OpeningBoard({
     !wrong &&
     !evaluating &&
     (level < 4 || !!auth.token)
-  const last = pendingMove?.uci ?? wrong?.uci ?? allMoves[ply - 1]?.uci
+  const last = wrong?.uci ?? pendingMove?.uci ?? allMoves[ply - 1]?.uci
   const dots = canPlay && picked ? targets(fen, picked) : []
-  const hint = canPlay && level < 3 ? game.moves[ply]?.uci : undefined
+  const hint = canPlay && (level < 3 || hintRevealed) ? (game.moves[ply]?.uci ?? engineHint) : undefined
   const arrows =
-    hint && level === 1
+    hint && (level === 1 || hintRevealed)
       ? [{ startSquare: hint.slice(0, 2), endSquare: hint.slice(2, 4), color: '#2E8B62' }]
       : []
 
   const finishPractice = useCallback(
-    (ending?: string, completedMoves: typeof allMoves = allMoves) => {
+    (ending?: string, completedMoves: typeof allMoves = allMoves, gaveUp = false) => {
       const completedTotal = completedMoves.filter((move) => move.color === side).length
       const missedCount = missedPlies.length
-      onComplete(line.id, side, completedTotal - missedCount, completedTotal)
+      if (!gaveUp) onComplete(line.id, side, completedTotal - missedCount, completedTotal)
       const { level: nextLevel, mastered } = advanceOpeningLevel(level, missedCount > 0)
-      const transition = mastered
-        ? '🎉 GM Level completed! You can practice it again.'
-        : missedCount > 0
-          ? 'Level completed with mistakes.'
-          : '🎉 Level completed.'
+      const transition = gaveUp
+        ? 'You gave up. Your level dropped.'
+        : mastered
+          ? '🎉 GM Level completed! You can practice it again.'
+          : missedCount > 0
+            ? 'Level completed with mistakes.'
+            : '🎉 Level completed.'
       const message = ending ? `${ending} ${transition}` : transition
-      if (onLevelChange(line.id, side, nextLevel, mastered, errors.length)) {
+      if (onLevelChange(line.id, side, nextLevel, mastered, errors.length, !gaveUp)) {
         setResult(message)
       } else {
         setResult('Your attempt finished, but the training level could not be saved.')
@@ -1214,7 +1222,7 @@ function OpeningBoard({
 
   useEffect(() => {
     if (!wrong) return
-    const timer = window.setTimeout(() => setWrong(null), WRONG_MOVE_DELAY)
+    const timer = window.setTimeout(() => setWrong(null), wrong.delay)
     return () => window.clearTimeout(timer)
   }, [wrong])
 
@@ -1297,6 +1305,9 @@ function OpeningBoard({
     if (expected) {
       if (uci === expected.uci) {
         setAttempt(null)
+        setConsecutiveErrors(0)
+        setHintRevealed(false)
+        setEngineHint(undefined)
         const done = game.moves.slice(0, ply + 1).filter((move) => move.color === side).length
         onAdvance(line.id, side, done, game.moves.filter((move) => move.color === side).length)
         if (level < 4 && ply + 1 === game.moves.length) finishPractice()
@@ -1314,12 +1325,13 @@ function OpeningBoard({
           void playExplorerMove(fenOf(next), allMoves)
       } else {
         setAttempt('wrong')
+        setConsecutiveErrors((count) => count + 1)
         setMissedPlies((missed) => (missed.includes(ply) ? missed : [...missed, ply]))
         setErrors((current) => [
           ...current,
           { ply, uci, san: sanOf(fen, uci), fenBefore: fen, fenAfter: fenOf(next), kind: 'Incorrect move' },
         ])
-        setWrong({ fen: fenOf(next), uci })
+        setWrong({ fen: fenOf(next), uci, delay: WRONG_MOVE_DELAY })
       }
       return true
     }
@@ -1333,7 +1345,6 @@ function OpeningBoard({
     const nextFen = fenOf(next)
     setPendingMove({ fen: nextFen, uci })
     setEvaluating(true)
-    const delay = waitForDelay(WRONG_MOVE_DELAY, controller.signal)
     void (async () => {
       try {
         const analysis = getLiveAnalysis()
@@ -1371,8 +1382,9 @@ function OpeningBoard({
             settingsFor(prefs.preset, ENGINE_ID),
             previous,
           )
-          if (!(await delay) || controller.signal.aborted || analysisId.current !== id) return
           setAttempt(decision === 'inaccuracy' ? 'inaccurate' : 'wrong')
+          setConsecutiveErrors((count) => count + 1)
+          setEngineHint(before.line[0])
           setMissedPlies((missed) => (missed.includes(ply) ? missed : [...missed, ply]))
           setErrors((current) => [
             ...current,
@@ -1385,6 +1397,7 @@ function OpeningBoard({
               kind,
             },
           ])
+          setWrong({ fen: nextFen, uci, delay: ENGINE_WRONG_MOVE_DELAY })
           return
         }
 
@@ -1403,6 +1416,9 @@ function OpeningBoard({
         setExtraMoves((current) => [...current, newMove])
         setExtraFens((current) => [...current, nextFen])
         setAttempt(null)
+        setConsecutiveErrors(0)
+        setHintRevealed(false)
+        setEngineHint(undefined)
         setPly(ply + 1)
         if (extraPlayed + 1 >= extraRequired) finishPractice(undefined, completedMoves)
         else if (terminal(nextFen)) finishIncomplete()
@@ -1410,7 +1426,6 @@ function OpeningBoard({
       } catch (error) {
         if (!controller.signal.aborted && analysisId.current === id) {
           setEngineError(error instanceof Error ? error.message : 'Stockfish could not evaluate this move.')
-          await delay
         }
       } finally {
         controller.abort()
@@ -1430,7 +1445,7 @@ function OpeningBoard({
     rating === null
       ? ''
       : rating === 0
-        ? 'Lichess Rapid ratings 0–999 (the closest available group to 400).'
+        ? 'Lichess Rapid ratings 0–999.'
         : rating === 2500
           ? 'Lichess Rapid ratings 2500 and above.'
           : `Lichess Rapid ratings ${rating}–${rating + (rating === 2200 ? 299 : 199)}.`
@@ -1443,6 +1458,9 @@ function OpeningBoard({
     setWrong(null)
     setPendingMove(null)
     setAttempt(null)
+    setConsecutiveErrors(0)
+    setHintRevealed(false)
+    setEngineHint(undefined)
     setMissedPlies([])
     setErrors([])
     setReview(null)
@@ -1452,11 +1470,35 @@ function OpeningBoard({
     setPhase('playing')
   }
 
+  const connectLichess = () => {
+    void beginLichessLogin().catch((error: unknown) =>
+      setAuth({
+        token: null,
+        error: error instanceof Error ? error.message : 'Could not start Lichess login.',
+      }),
+    )
+  }
+  const needsLichess = level >= 4 && !auth.token
+
   return (
     <>
       <div className="learn-level" aria-label="Training level">
         <div>
-          <strong>{level <= 3 ? `Level ${level} of 3` : levelName}</strong>
+          <strong
+            className={`pill learn-level-badge ${
+              level <= 4
+                ? 'beginner'
+                : level <= 7
+                  ? 'club'
+                  : level <= 10
+                    ? 'expert'
+                    : level === 11
+                      ? 'im'
+                      : 'gm'
+            }`}
+          >
+            {levelName}
+          </strong>
           <span>
             {level <= 3
               ? ['View the line', 'Practice with arrows', 'Practice with piece hints', 'Play independently'][
@@ -1469,11 +1511,6 @@ function OpeningBoard({
       </div>
       {level >= 4 && (
         <div className="learn-lichess">
-          <p className="muted">
-            After this variation, play {extraRequired} good moves against Lichess Rapid replies from this
-            rating group. Replies played at least 5% of the time are chosen in proportion to their frequency.
-            Inaccuracies and worse are taken back; any error drops your level after the run.
-          </p>
           {auth.error && <p role="alert">{auth.error}</p>}
           {lichessError && (
             <p className="error" role="alert">
@@ -1485,36 +1522,12 @@ function OpeningBoard({
               Stockfish could not evaluate the move: {engineError}
             </p>
           )}
-          {auth.token ? (
-            <>
-              <button
-                type="button"
-                className="secondary"
-                disabled={phase === 'playing'}
-                onClick={() => {
-                  clearLichessToken()
-                  setAuth({ token: null, error: '' })
-                }}
-              >
-                Forget Lichess session on this tab
-              </button>
-              <a href="https://lichess.org/account/oauth/token" target="_blank" rel="noreferrer">
-                Revoke access on Lichess
-              </a>
-            </>
-          ) : (
+          {!auth.token && (
             <button
               type="button"
               className="secondary"
               disabled={phase === 'playing' && !opponentTurn}
-              onClick={() => {
-                void beginLichessLogin().catch((error: unknown) =>
-                  setAuth({
-                    token: null,
-                    error: error instanceof Error ? error.message : 'Could not start Lichess login.',
-                  }),
-                )
-              }}
+              onClick={connectLichess}
             >
               Connect Lichess
             </button>
@@ -1535,8 +1548,9 @@ function OpeningBoard({
           variation={line.name}
           result={result}
           nextLevel={levelName}
-          startDisabled={levelError || (level >= 4 && !auth.token)}
-          onStart={startPractice}
+          startDisabled={levelError}
+          needsLichess={needsLichess}
+          onStart={needsLichess ? connectLichess : startPractice}
         />
       ) : (
         <div className="stage train-stage">
@@ -1587,7 +1601,7 @@ function OpeningBoard({
                           }}
                         >
                           {children}
-                          {hint?.slice(0, 2) === square && level === 2 && (
+                          {hint?.slice(0, 2) === square && level === 2 && !hintRevealed && (
                             <span className="learn-piece-hint" aria-hidden="true" />
                           )}
                           {target && (
@@ -1675,28 +1689,35 @@ function OpeningBoard({
                 )}
                 {hint && (
                   <p className="muted">
-                    {level === 1
+                    {level === 1 || hintRevealed
                       ? `Hint: ${hint.slice(0, 2)} to ${hint.slice(2, 4)}.`
                       : `Hint: move the piece on ${hint.slice(0, 2)}.`}
                   </p>
                 )}
                 {level >= 4 ? (
                   <>
-                    <p className="muted">
-                      {ply >= game.moves.length
-                        ? 'Variation complete ✓'
-                        : `Variation: ${ply} of ${game.moves.length} moves played`}
-                    </p>
-                    <div>
-                      <p className="muted">
-                        After the variation: {extraPlayed} of {extraRequired} good moves
-                      </p>
-                      <progress
-                        max={extraRequired}
-                        value={extraPlayed}
-                        aria-label="Progress after the variation"
-                      />
-                    </div>
+                    {ply >= game.moves.length ? (
+                      <>
+                        <p className="muted">Variation complete ✓</p>
+                        <div>
+                          <p className="muted">
+                            After the variation: {extraPlayed} of {extraRequired} good moves
+                          </p>
+                          <progress
+                            max={extraRequired}
+                            value={extraPlayed}
+                            aria-label="Progress after the variation"
+                          />
+                        </div>
+                      </>
+                    ) : (
+                      <div>
+                        <p className="muted">
+                          Variation: {ply} of {game.moves.length} moves played
+                        </p>
+                        <progress max={game.moves.length} value={ply} aria-label="Variation progress" />
+                      </div>
+                    )}
                   </>
                 ) : (
                   <>
@@ -1712,6 +1733,19 @@ function OpeningBoard({
                     line.
                   </p>
                 )}
+                {phase === 'playing' && consecutiveErrors >= 2 && (
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={!canPlay}
+                    onClick={() => {
+                      if (game.moves[ply]?.uci || engineHint) setHintRevealed(true)
+                      else setEngineError('Stockfish did not return a best move for this position.')
+                    }}
+                  >
+                    Show hint
+                  </button>
+                )}
               </>
             )}
             {phase === 'result' && <p role="status">{result}</p>}
@@ -1719,10 +1753,23 @@ function OpeningBoard({
               <button
                 type="button"
                 className="cta"
-                disabled={levelError || (level > 0 && total === 0) || (level >= 4 && !auth.token)}
-                onClick={startPractice}
+                disabled={levelError || (level > 0 && total === 0)}
+                onClick={needsLichess ? connectLichess : startPractice}
               >
-                {level === 0 ? 'Start playback' : `Start ${levelName}`}
+                {needsLichess
+                  ? 'Connect Lichess to continue'
+                  : level === 0
+                    ? 'Start playback'
+                    : `Start ${levelName}`}
+              </button>
+            ) : level > 0 && consecutiveErrors >= 3 ? (
+              <button
+                type="button"
+                className="secondary"
+                disabled={!!wrong || evaluating || fetchingExplorer}
+                onClick={() => finishPractice(undefined, allMoves.slice(0, ply), true)}
+              >
+                Give up
               </button>
             ) : level > 0 ? (
               <button
@@ -1740,6 +1787,9 @@ function OpeningBoard({
                   setWrong(null)
                   setPendingMove(null)
                   setAttempt(null)
+                  setConsecutiveErrors(0)
+                  setHintRevealed(false)
+                  setEngineHint(undefined)
                   setMissedPlies([])
                   setErrors([])
                   setReview(null)
@@ -1772,6 +1822,24 @@ function OpeningBoard({
           </div>
         </div>
       </section>
+      {auth.token && (
+        <div className="learn-lichess learn-lichess-session">
+          <button
+            type="button"
+            className="secondary"
+            disabled={phase === 'playing'}
+            onClick={() => {
+              clearLichessToken()
+              setAuth({ token: null, error: '' })
+            }}
+          >
+            Forget Lichess session on this tab
+          </button>
+          <a href="https://lichess.org/account/security" target="_blank" rel="noreferrer">
+            Revoke access on Lichess
+          </a>
+        </div>
+      )}
     </>
   )
 }
