@@ -55,5 +55,14 @@ export { ChessComError, fetchMonth, listMonths, type RemoteGame } from './chessc
 export { engineIdFor, fullEngine } from './engine'
 export { EngineDownloadError, type Progress } from './full-engine'
 export { LichessError, fetchLichessGames } from './lichess'
+export { beginLichessLogin, clearLichessToken, finishLichessLogin, getLichessToken } from './lichess-auth'
+export {
+  fetchOpeningMove,
+  LichessExplorerError,
+  OPENING_RATING_GROUPS,
+  ratingGroupForLevel,
+  type ExplorerLevel,
+  type ExplorerMove,
+} from './lichess-opening-explorer'
 export type { StoredReview, Summary } from './storage'
 export type { PuzzleService, SyncProgress } from './puzzles'

@@ -37,7 +37,7 @@ function trainFocus(hash: string): {
   }
 }
 
-export function App() {
+export function App({ lichessLoginError = null }: { lichessLoginError?: string | null }) {
   const [hash, setHash] = useState(location.hash)
   useEffect(() => {
     const on = () => setHash(location.hash)
@@ -49,6 +49,11 @@ export function App() {
   const route = parse(hash)
   return (
     <>
+      {lichessLoginError && (
+        <p className="error" role="alert">
+          {lichessLoginError}
+        </p>
+      )}
       {updateReady && (
         <p className="update" role="status">
           A new version of chessreview is ready.{' '}

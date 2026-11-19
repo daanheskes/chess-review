@@ -57,7 +57,8 @@ typecheck.
 
 ## Things to avoid
 
-- Telemetry, analytics, trackers, or any paid or third-party API.
+- Telemetry, analytics, trackers, or paid APIs. Lichess Opening Explorer is the sole approved
+  third-party API exception; use its documented rating groups and the browser-side PKCE flow.
 - Loosening the Content-Security-Policy in `apps/web/public/_headers`. If a feature needs a new
   origin, add exactly that origin and a focused browser check for it.
 - New dependencies without a reason. Say in the pull request, in one line, why each is worth it.

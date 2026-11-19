@@ -172,6 +172,35 @@ export as annotated PGN (`exportPgn`) and as JSON (`exportJson`); `importJson` t
 untrusted, checks every field against the PGN it carries, and recomputes the id from the review's own
 settings before storing it. `docs/adr/0006-import-export.md` has the details.
 
+### 15. Lichess opening training is opt-in and rating-bucketed
+
+After the existing three variation-practice levels, the Opening Explorer supplies the opponent's
+reply from Rapid games (`apps/web/src/services/lichess-opening-explorer.ts`). Moves played less than
+5% of the time are excluded; the rest are sampled in proportion to their game counts. Levels 4
+through GM map to Lichess rating groups 0, 1000, 1200, 1400, 1600, 1800, 2000, 2200 and 2500. The
+lowest group is 0–999, so level 4's requested 400 rating is an approximation, not an exact filter.
+Users authenticate directly with Lichess using PKCE; the access token stays in tab-scoped
+`sessionStorage` and is never shipped by the app. User moves are checked by the existing Stockfish
+worker pool against the review's win-chance thresholds. Inaccuracies and worse are taken back and
+any error lowers the next level after the run. After the variation, the user must play 2 good moves
+at level 4, increasing by one per level to 10 at GM. A position without Explorer
+continuations or an early game end cannot complete a level.
+
+Moves awaiting Stockfish appear immediately; rejected moves remain visible until both the evaluation
+and a one-second minimum have finished. Fixed and Explorer replies
+wait at least 650 ms. After a completed attempt, the opening board becomes a move-by-move review. Incorrect attempts are
+shown on the board, and users can explore continuations before returning to the opening. The existing
+live Stockfish analysis supplies the evaluation bar and best-move arrow; rejected moves use the same
+classification as game reviews, including missed chances after an opponent error. The level record
+also stores the highest level reached and counts of completed attempts and errors for each variation
+and side. Older records start tracking statistics from their current level; earlier attempts cannot
+be reconstructed.
+
+The explorer's separate origin (`https://explorer.lichess.org`) is the only new CSP connection and
+has a browser regression check. Browser JavaScript cannot set a custom `User-Agent`, so requests
+carry the browser's own header; a deployment needing Lichess's requested app-identifying header
+requires a server-side proxy.
+
 ## Changing the rules
 
 1. Change `reference/python/src/chessreview/analysis.py`.
@@ -186,11 +215,12 @@ Adding a label means: the `LABELS` list and `GLYPH` in core, the rule in `buildR
 
 ## Security
 
-No backend and no accounts. The deployed site sets a strict Content-Security-Policy
+No backend or local product accounts; opening training has an optional direct Lichess OAuth PKCE
+connection. The deployed site sets a strict Content-Security-Policy
 (`apps/web/public/_headers`): scripts and workers from the same origin only, `wasm-unsafe-eval` for the
-engine, and `connect-src` limited to `api.chess.com` and `lichess.org`. Browser regression checks run under
-that policy. The engine is GPL-3.0 software, so the project is GPL-3.0-or-later and ships the licence and
-source pointers with the engine files.
+engine, and `connect-src` limited to `api.chess.com`, `lichess.org` and
+`explorer.lichess.org`. Browser regression checks run under that policy. The engine is GPL-3.0 software,
+so the project is GPL-3.0-or-later and ships the licence and source pointers with the engine files.
 
 ## Known limits and next steps
 

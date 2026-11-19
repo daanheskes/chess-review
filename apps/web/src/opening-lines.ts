@@ -62,11 +62,34 @@ for (const line of openingLines) {
   else groups.set(name, [line])
 }
 
+export function displayOpeningLines(lines: OpeningLine[], groupName: string): OpeningLine[] {
+  const moveCount = (line: OpeningLine) =>
+    line.pgn.split(/\s+/).filter((token) => !/^\d+\.$/.test(token)).length
+  const base = lines
+    .filter((line) => line.name === groupName)
+    .reduce<OpeningLine | undefined>(
+      (shortest, line) => (!shortest || moveCount(line) < moveCount(shortest) ? line : shortest),
+      undefined,
+    )
+  const variations = lines.filter(
+    (line) =>
+      line !== base &&
+      !lines.some(
+        (other) =>
+          other !== base &&
+          other.id !== line.id &&
+          other.name === line.name &&
+          other.pgn.startsWith(`${line.pgn} `),
+      ),
+  )
+  return base ? [base, ...variations] : variations
+}
+
 export const openingGroups = [...groups]
-  .map(([name, lines]) => ({
-    name,
-    lines: lines.sort((a, b) => Number(curatedOpeningIds.has(b.id)) - Number(curatedOpeningIds.has(a.id))),
-  }))
+  .map(([name, lines]) => {
+    lines.sort((a, b) => Number(curatedOpeningIds.has(b.id)) - Number(curatedOpeningIds.has(a.id)))
+    return { name, lines, displayLines: displayOpeningLines(lines, name) }
+  })
   .sort((a, b) => a.name.localeCompare(b.name))
 
 export function groupLinesByName(lines: OpeningLine[]): OpeningLine[][] {

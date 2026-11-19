@@ -1,7 +1,9 @@
+import { PRESETS, loadBook, sanOf, settingsFor, terminal } from '@chessreview/core'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AppHeader } from './AppHeader'
 import { explore, fenOf, play, targets } from './explore'
 import { LegalMoveMarker } from './LegalMoveMarker'
+import { OpeningTrainingReview, type OpeningAttemptError } from './OpeningTrainingReview'
 import {
   curatedOpeningDescriptions,
   curatedOpeningIds,
@@ -18,6 +20,25 @@ import {
 } from './opening-lines'
 import { isLight, NAMED_PIECES, PIECE_NAMES, reducedMotion, VisibleChessboard } from './pieces'
 import { BOARDS, usePrefs } from './prefs'
+import {
+  advanceOpeningLevel,
+  openingAttemptLabel,
+  openingMoveDecision,
+  openingMoveLoss,
+  requiredOpeningMoves,
+  type OpeningTrainingLevel,
+} from './opening-training'
+import {
+  beginLichessLogin,
+  clearLichessToken,
+  fetchOpeningMove,
+  getLiveAnalysis,
+  getLichessToken,
+  LichessExplorerError,
+  ratingGroupForLevel,
+  type ExplorerLevel,
+} from './services'
+import { ENGINE_ID } from './services/engine'
 import { Segmented } from './Segmented'
 
 type Side = 'w' | 'b'
@@ -27,19 +48,51 @@ type StyleFilter = 'Any style' | 'Solid' | 'Aggressive'
 type Saved = { id: string; side: Side }
 type Progress = Saved & { correct: number; total: number }
 type Completion = Saved & { done: number; total: number }
-type TrainingLevel = 0 | 1 | 2 | 3
-type LevelProgress = Saved & { level: TrainingLevel; mastered: boolean }
+type TrainingLevel = OpeningTrainingLevel
+type LevelStats = { highestLevel: TrainingLevel; attempts: number; errors: number }
+type LevelProgress = Saved & { level: TrainingLevel; mastered: boolean; stats?: LevelStats }
+function openingLevelName(level: TrainingLevel): string {
+  return level === 11 ? 'IM Level' : level === 12 ? 'GM Level' : `Level ${level}`
+}
+
 const LEVEL_ORDER = { Beginner: 0, Club: 1, Expert: 2 } as const
 const STYLE_ORDER = { Solid: 0, Aggressive: 1 } as const
 const STARTER_OPENINGS = [
   { name: 'London System', side: 'w', label: 'White' },
   { name: 'Caro-Kann Defense', side: 'b', label: 'Black · vs 1.e4' },
-  { name: "King's Indian Defense", side: 'b', label: 'Black · vs 1.d4 · Expert' },
+  { name: "King's Indian Defense", side: 'b', label: 'Black · vs 1.d4' },
 ] as const
 const REPERTOIRE_KEY = 'chessreview.opening-repertoire'
 const PROGRESS_KEY = 'chessreview.opening-progress'
 const COMPLETION_KEY = 'chessreview.opening-completion'
 const LEVEL_KEY = 'chessreview.opening-levels'
+const PLAYBACK_DELAY = 1200
+const OPPONENT_DELAY = 650
+const WRONG_MOVE_DELAY = 1000
+
+function waitForDelay(duration: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    const finish = (ready: boolean) => {
+      window.clearTimeout(timer)
+      signal.removeEventListener('abort', abort)
+      resolve(ready)
+    }
+    const abort = () => finish(false)
+    const timer = window.setTimeout(() => finish(true), duration)
+    signal.addEventListener('abort', abort, { once: true })
+  })
+}
+const openingNamesById = new Map(
+  openingGroups.flatMap((group) => group.lines.map((line) => [line.id, group.name] as const)),
+)
+
+function sameOpening(first: Saved, second: Saved): boolean {
+  return (
+    first.side === second.side &&
+    (openingNamesById.get(first.id) ?? first.id) === (openingNamesById.get(second.id) ?? second.id)
+  )
+}
 
 function openingUrl(name: string, side: Side, line?: OpeningLine): string {
   return `#/openings/${openingSlug(name)}${line ? `/${openingLineSlug(line)}` : ''}?side=${side}`
@@ -61,7 +114,11 @@ function readRepertoire(): { saved: Saved[]; error: string | null } {
       )
     )
       throw new Error('Invalid repertoire')
-    return { saved: raw as Saved[], error: null }
+    const saved: Saved[] = []
+    for (const entry of raw as Saved[]) {
+      if (!saved.some((existing) => sameOpening(existing, entry))) saved.push(entry)
+    }
+    return { saved, error: null }
   } catch {
     return { saved: [], error: 'Could not read your repertoire. Reload the page before making changes.' }
   }
@@ -143,14 +200,36 @@ function readLevels(): { entries: LevelProgress[]; error: string | null } {
           'side' in item &&
           (item.side === 'w' || item.side === 'b') &&
           'level' in item &&
-          (item.level === 0 || item.level === 1 || item.level === 2 || item.level === 3) &&
+          typeof item.level === 'number' &&
+          Number.isInteger(item.level) &&
+          item.level >= 0 &&
+          item.level <= 12 &&
           'mastered' in item &&
           typeof item.mastered === 'boolean' &&
-          (!item.mastered || item.level === 3),
+          (!item.mastered || item.level === 3 || item.level === 12) &&
+          (!('stats' in item) ||
+            (typeof item.stats === 'object' &&
+              item.stats !== null &&
+              'highestLevel' in item.stats &&
+              typeof item.stats.highestLevel === 'number' &&
+              Number.isInteger(item.stats.highestLevel) &&
+              item.stats.highestLevel >= item.level &&
+              item.stats.highestLevel <= 12 &&
+              'attempts' in item.stats &&
+              typeof item.stats.attempts === 'number' &&
+              Number.isSafeInteger(item.stats.attempts) &&
+              item.stats.attempts >= 0 &&
+              'errors' in item.stats &&
+              typeof item.stats.errors === 'number' &&
+              Number.isSafeInteger(item.stats.errors) &&
+              item.stats.errors >= 0)),
       )
     )
       throw new Error('Invalid opening levels')
-    return { entries: raw as LevelProgress[], error: null }
+    const entries = (raw as LevelProgress[]).map((entry) =>
+      entry.level === 3 && entry.mastered ? { ...entry, level: 4 as const, mastered: false } : entry,
+    )
+    return { entries, error: null }
   } catch {
     return { entries: [], error: 'Could not read your training levels. Reload the page before practicing.' }
   }
@@ -181,9 +260,6 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
       : group && recommendedGroups.b.some((name) => name === group.name)
         ? 'b'
         : 'w'
-  const saved = selected
-    ? repertoire.saved.some((entry) => entry.id === selected.id && entry.side === side)
-    : false
   const recommendations = (['w', 'b'] as const).flatMap((color) =>
     recommendedGroups[color].map((name) => ({
       group: openingGroups.find((item) => item.name === name)!,
@@ -193,8 +269,7 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
   const missingStarter = STARTER_OPENINGS.filter(
     (starter) =>
       !repertoire.saved.some((entry) => {
-        const line = openingLines.find((item) => item.id === entry.id)
-        return entry.side === starter.side && line?.name.split(/[:,]/, 1)[0]!.trim() === starter.name
+        return entry.side === starter.side && openingNamesById.get(entry.id) === starter.name
       }),
   )
   const matches = recommendations
@@ -212,8 +287,12 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
         STYLE_ORDER[first.style] - STYLE_ORDER[second.style]
       )
     })
-  const lines = group?.lines ?? []
-  const lineGroups = groupLinesByName(lines)
+  const lines = group?.displayLines ?? []
+  const baseLine = lines[0]?.name === group?.name ? lines[0] : undefined
+  const lineGroups = [
+    ...(baseLine ? [[baseLine]] : []),
+    ...groupLinesByName(baseLine ? lines.slice(1) : lines),
+  ]
 
   useEffect(() => {
     document.title = `${selected?.name ?? group?.name ?? 'Openings'} · chessreview`
@@ -233,10 +312,10 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
   }
 
   const toggleSaved = (id: string, savedSide: Side) => {
-    const exists = repertoire.saved.some((entry) => entry.id === id && entry.side === savedSide)
+    const exists = repertoire.saved.find((entry) => sameOpening(entry, { id, side: savedSide }))
     if (exists) {
       const line = openingLines.find((item) => item.id === id)!
-      setPendingRemoval({ id, side: savedSide, name: line.name.split(/[:,]/, 1)[0]!.trim() })
+      setPendingRemoval({ ...exists, name: line.name.split(/[:,]/, 1)[0]!.trim() })
     } else {
       saveRepertoire([...repertoire.saved, { id, side: savedSide }])
     }
@@ -278,11 +357,26 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
     }
   }
 
-  const recordLevel = (id: string, practiceSide: Side, nextLevel: TrainingLevel, mastered: boolean) => {
+  const recordLevel = (
+    id: string,
+    practiceSide: Side,
+    nextLevel: TrainingLevel,
+    mastered: boolean,
+    attemptErrors?: number,
+  ) => {
     if (levels.error) return false
+    const previous = levels.entries.find((entry) => entry.id === id && entry.side === practiceSide)
+    const stats: LevelStats = {
+      highestLevel: Math.max(
+        previous?.stats?.highestLevel ?? previous?.level ?? 0,
+        nextLevel,
+      ) as TrainingLevel,
+      attempts: (previous?.stats?.attempts ?? 0) + (attemptErrors === undefined ? 0 : 1),
+      errors: (previous?.stats?.errors ?? 0) + (attemptErrors ?? 0),
+    }
     const entries = [
       ...levels.entries.filter((entry) => entry.id !== id || entry.side !== practiceSide),
-      { id, side: practiceSide, level: nextLevel, mastered },
+      { id, side: practiceSide, level: nextLevel, mastered, stats },
     ]
     try {
       localStorage.setItem(LEVEL_KEY, JSON.stringify(entries))
@@ -317,7 +411,18 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
           </nav>
         )}
         <div className="insights-head">
-          <h1>{selected?.name ?? group?.name ?? 'Openings'}</h1>
+          <div className="learn-title">
+            <h1>{selected?.name ?? group?.name ?? 'Openings'}</h1>
+            {group && !selected && !invalidRoute && (
+              <RepertoireStar
+                name={group.name}
+                side={side}
+                saved={repertoire.saved.some((entry) => sameOpening(entry, { id: group.lines[0]!.id, side }))}
+                disabled={!!repertoire.error}
+                onClick={() => toggleSaved(group.lines[0]!.id, side)}
+              />
+            )}
+          </div>
         </div>
         {repertoire.error && (
           <p className="error" role="alert">
@@ -378,9 +483,7 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
                         return (
                           <p key={`${entry.side}|${entry.id}`}>A saved opening is no longer available.</p>
                         )
-                      const result = progress.entries.find(
-                        (item) => item.id === entry.id && item.side === entry.side,
-                      )
+                      const result = [...progress.entries].reverse().find((item) => sameOpening(item, entry))
                       const groupName = line.name.split(/[:,]/, 1)[0]!.trim()
                       const recommended = Object.values(recommendedGroups).some((names) =>
                         names.some((name) => name === groupName),
@@ -420,7 +523,7 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
                             className="cta"
                             aria-label={`Train ${groupName} as ${entry.side === 'w' ? 'White' : 'Black'}`}
                             onClick={() => {
-                              navigate(openingUrl(groupName, entry.side, recommended ? undefined : line))
+                              navigate(openingUrl(groupName, entry.side))
                             }}
                           >
                             Train
@@ -472,12 +575,14 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
             </div>
             <p className="muted">
               {lines.length} {lines.length === 1 ? 'line' : 'lines'}
-              {lineGroups.length !== lines.length && ` · ${lineGroups.length} named variations`}
+              {lineGroups.length !== lines.length && ` · ${lineGroups.length} cards`}
             </p>
             <div className="learn-cards learn-line-cards" aria-label="Opening lines">
+              {lines.length === 0 && <p className="muted">No lines are available for this opening yet.</p>}
               {lineGroups.map((sameName) => {
                 const line = sameName[0]!
-                const main = curatedOpeningIds.has(line.id)
+                const openingMoves = line === baseLine
+                const main = !openingMoves && curatedOpeningIds.has(line.id)
                 const lineProgress = (item: OpeningLine) => {
                   const completed = progress.entries.some(
                     (entry) => entry.id === item.id && entry.side === side,
@@ -490,7 +595,7 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
                 const percent = lineProgress(line)
                 return (
                   <article className="learn-card learn-line-card" key={line.id}>
-                    <h2>{main ? 'Main line' : line.name}</h2>
+                    <h2>{openingMoves ? 'Opening moves' : main ? 'Main line' : line.name}</h2>
                     {main && (
                       <>
                         <strong>{line.name}</strong>
@@ -500,18 +605,19 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
                       </>
                     )}
                     <p className="learn-card-description">
-                      {curatedOpeningDescriptions.get(line.id) ??
-                        'An explanation is not available for this line yet.'}
+                      {openingMoves
+                        ? `These moves define the ${group.name}${
+                            openingGame(line).moves.length > 2
+                              ? '; other move orders may also be possible.'
+                              : '.'
+                          }`
+                        : (curatedOpeningDescriptions.get(line.id) ??
+                          'An explanation is not available for this line yet.')}
                     </p>
                     <p className="muted">
                       {line.eco} · {line.types.length ? line.types.join(', ') : 'Type not classified'}
                     </p>
-                    <p className="learn-line-moves">{line.pgn}</p>
-                    <p className="learn-card-progress">Progress · {percent}%</p>
-                    <progress max={100} value={percent} aria-label={`${line.name} progress`} />
-                    <a className="cta" href={openingUrl(group.name, side, line)}>
-                      Train
-                    </a>
+                    <LinePreview line={line} side={side} percent={percent} groupName={group.name} />
                     {sameName.length > 1 && (
                       <details className="learn-line-alternatives">
                         <summary>
@@ -522,16 +628,13 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
                           const alternativePercent = lineProgress(alternative)
                           return (
                             <div className="learn-line-alternative" key={alternative.id}>
-                              <p className="learn-line-moves">{alternative.pgn}</p>
-                              <p className="learn-card-progress">Progress · {alternativePercent}%</p>
-                              <progress
-                                max={100}
-                                value={alternativePercent}
-                                aria-label={`${alternative.name}, ${alternative.pgn} progress`}
+                              <LinePreview
+                                line={alternative}
+                                side={side}
+                                percent={alternativePercent}
+                                groupName={group.name}
+                                alternative
                               />
-                              <a className="cta" href={openingUrl(group.name, side, alternative)}>
-                                Train
-                              </a>
                             </div>
                           )
                         })}
@@ -651,12 +754,12 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
                 </p>
               )}
               {matches.map(({ group: item, side: cardSide }) => {
-                const count = item.lines.length
+                const count = item.displayLines.length
                 const profile = openingProfiles[item.name]!
                 const example = firstOpeningPiece(item.name, cardSide)
                 const line = item.lines[0]!
-                const cardSaved = repertoire.saved.some(
-                  (entry) => entry.id === line.id && entry.side === cardSide,
+                const cardSaved = repertoire.saved.some((entry) =>
+                  sameOpening(entry, { id: line.id, side: cardSide }),
                 )
                 return (
                   <article className="learn-card learn-opening-card" key={`${cardSide}|${item.name}`}>
@@ -712,16 +815,6 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
                   if (group) navigate(openingUrl(group.name, value, selected))
                 }}
               />
-              {!saved && (
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={!!repertoire.error}
-                  onClick={() => toggleSaved(selected.id, side)}
-                >
-                  Add to repertoire
-                </button>
-              )}
             </div>
             <OpeningBoard
               key={`${selected.id}|${side}`}
@@ -736,6 +829,108 @@ export function LearnPage({ hash, navigate }: { hash: string; navigate: (hash: s
           </section>
         )}
       </main>
+    </>
+  )
+}
+
+function LinePreview({
+  line,
+  side,
+  percent,
+  groupName,
+  alternative = false,
+}: {
+  line: OpeningLine
+  side: Side
+  percent: number
+  groupName: string
+  alternative?: boolean
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const [ply, setPly] = useState(0)
+  const needsGame = visible || playing || ply > 0
+  const game = useMemo(() => (needsGame ? openingGame(line) : null), [line, needsGame])
+  const squares = BOARDS[usePrefs().board]
+
+  useEffect(() => {
+    const element = ref.current!
+    const observer = new IntersectionObserver(([entry]) => setVisible(entry!.isIntersecting), {
+      rootMargin: '300px',
+    })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (!playing || !game) return
+    const timer = window.setTimeout(() => {
+      if (ply + 1 === game.moves.length) setPlaying(false)
+      setPly((current) => current + 1)
+    }, PLAYBACK_DELAY)
+    return () => window.clearTimeout(timer)
+  }, [playing, game, ply])
+
+  return (
+    <>
+      <p className="learn-line-moves">{line.pgn}</p>
+      <div
+        ref={ref}
+        className="learn-line-preview board"
+        role="img"
+        aria-label={`${line.name} preview${game ? `, move ${ply} of ${game.moves.length}` : ''}`}
+      >
+        {visible && game && (
+          <div aria-hidden="true">
+            <VisibleChessboard
+              active
+              options={{
+                position: game.fens[ply]!,
+                boardOrientation: side === 'w' ? 'white' : 'black',
+                pieces: NAMED_PIECES,
+                allowDragging: false,
+                animationDurationInMs: reducedMotion() ? 0 : 160,
+                lightSquareStyle: { backgroundColor: squares.light },
+                darkSquareStyle: { backgroundColor: squares.dark },
+              }}
+            />
+          </div>
+        )}
+      </div>
+      <p className="learn-card-progress">Progress · {percent}%</p>
+      <progress
+        max={100}
+        value={percent}
+        aria-label={`${line.name}${alternative ? `, ${line.pgn}` : ''} progress`}
+      />
+      <div className="learn-line-actions">
+        <button
+          type="button"
+          className="secondary learn-watch"
+          disabled={playing}
+          onClick={() => {
+            setPly(0)
+            setPlaying(true)
+          }}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            aria-hidden="true"
+          >
+            <path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" strokeWidth="1.8" />
+            <circle cx="12" cy="12" r="3" strokeWidth="1.8" />
+          </svg>
+          {ply > 0 && !playing ? 'Watch again' : 'Watch'}
+        </button>
+        <a className="cta" href={openingUrl(groupName, side, line)}>
+          Train
+        </a>
+      </div>
     </>
   )
 }
@@ -769,12 +964,10 @@ function RemoveOpeningDialog({
 
   return (
     <dialog ref={ref} className="engine-dialog" aria-labelledby="remove-opening-title" onClose={onClose}>
-      <h2 id="remove-opening-title">Remove {opening.name} from your repertoire?</h2>
-      <p className="muted">
-        Remove the {opening.side === 'w' ? 'White' : 'Black'} line. Your practice progress will be kept.
-      </p>
-      <div className="dialog-actions">
-        <button type="button" className="ghost" autoFocus onClick={() => ref.current?.close()}>
+      <h2 id="remove-opening-title">Remove the {opening.name} from your repertoire?</h2>
+      <p className="muted">Your practice progress will be kept; add it back anytime you want.</p>
+      <div className="dialog-actions learn-remove-actions">
+        <button type="button" className="secondary" autoFocus onClick={() => ref.current?.close()}>
           Cancel
         </button>
         <button
@@ -879,51 +1072,113 @@ function OpeningBoard({
   side: Side
   level: LevelProgress | undefined
   levelError: boolean
-  onLevelChange: (id: string, side: Side, level: TrainingLevel, mastered: boolean) => boolean
+  onLevelChange: (
+    id: string,
+    side: Side,
+    level: TrainingLevel,
+    mastered: boolean,
+    attemptErrors?: number,
+  ) => boolean
   onComplete: (id: string, side: Side, correct: number, total: number) => void
   onAdvance: (id: string, side: Side, done: number, total: number) => void
 }) {
   const game = useMemo(() => openingGame(line), [line])
-  const squares = BOARDS[usePrefs().board]
+  const prefs = usePrefs()
+  const squares = BOARDS[prefs.board]
   const level = savedLevel?.level ?? 0
   const [phase, setPhase] = useState<'ready' | 'playing' | 'result'>('ready')
   const [result, setResult] = useState('')
   const [ply, setPly] = useState(0)
   const [picked, setPicked] = useState<string | null>(null)
   const [wrong, setWrong] = useState<{ fen: string; uci: string } | null>(null)
-  const [attempt, setAttempt] = useState<'wrong' | null>(null)
+  const [pendingMove, setPendingMove] = useState<{ fen: string; uci: string } | null>(null)
+  const [attempt, setAttempt] = useState<'wrong' | 'inaccurate' | null>(null)
   const [missedPlies, setMissedPlies] = useState<number[]>([])
-  const total = game.moves.filter((move) => move.color === side).length
-  const finished = ply >= game.moves.length
-  const opponentTurn = phase === 'playing' && level > 0 && !finished && game.moves[ply]?.color !== side
-  const canPlay = phase === 'playing' && level > 0 && !finished && !opponentTurn && !wrong
-  const fen = wrong?.fen ?? game.fens[ply]!
-  const last = wrong?.uci ?? game.moves[ply - 1]?.uci
+  const [errors, setErrors] = useState<OpeningAttemptError[]>([])
+  const [extraMoves, setExtraMoves] = useState<typeof game.moves>([])
+  const [extraFens, setExtraFens] = useState<string[]>([])
+  const [review, setReview] = useState<{ moves: typeof game.moves; errors: OpeningAttemptError[] } | null>(
+    null,
+  )
+  const [auth, setAuth] = useState(() => {
+    try {
+      return { token: getLichessToken(), error: '' }
+    } catch (error) {
+      return {
+        token: null,
+        error: error instanceof Error ? error.message : 'Lichess session storage is unavailable.',
+      }
+    }
+  })
+  const [lichessError, setLichessError] = useState('')
+  const [engineError, setEngineError] = useState('')
+  const [evaluating, setEvaluating] = useState(false)
+  const [fetchingExplorer, setFetchingExplorer] = useState(false)
+  const analysisRequest = useRef<AbortController | null>(null)
+  const explorerRequest = useRef<AbortController | null>(null)
+  const analysisId = useRef(0)
+  const allMoves = useMemo(() => [...game.moves, ...extraMoves], [game.moves, extraMoves])
+  const allFens = useMemo(() => [...game.fens, ...extraFens], [game.fens, extraFens])
+  const total = allMoves.filter((move) => move.color === side).length
+  const extraPlayed = extraMoves.filter((move) => move.color === side).length
+  const extraRequired = level >= 4 ? requiredOpeningMoves(level as ExplorerLevel) : 0
+  const finished = level < 4 && ply >= allMoves.length
+  const fen = pendingMove?.fen ?? wrong?.fen ?? allFens[ply]!
+  const sideToMove = fen.split(' ')[1] === 'b' ? 'b' : 'w'
+  const opponentTurn = phase === 'playing' && level > 0 && !finished && sideToMove !== side
+  const canPlay =
+    phase === 'playing' &&
+    level > 0 &&
+    !finished &&
+    !opponentTurn &&
+    !wrong &&
+    !evaluating &&
+    (level < 4 || !!auth.token)
+  const last = pendingMove?.uci ?? wrong?.uci ?? allMoves[ply - 1]?.uci
   const dots = canPlay && picked ? targets(fen, picked) : []
-  const hint = canPlay && level < 3 ? game.moves[ply]!.uci : undefined
+  const hint = canPlay && level < 3 ? game.moves[ply]?.uci : undefined
   const arrows =
     hint && level === 1
       ? [{ startSquare: hint.slice(0, 2), endSquare: hint.slice(2, 4), color: '#2E8B62' }]
       : []
 
-  const finishPractice = useCallback(() => {
-    onComplete(line.id, side, total - missedPlies.length, total)
-    const nextLevel: TrainingLevel =
-      missedPlies.length > 0 ? (level === 1 ? 0 : level === 2 ? 1 : 2) : level === 1 ? 2 : 3
-    const mastered = level === 3 && missedPlies.length === 0
-    if (onLevelChange(line.id, side, nextLevel, mastered)) {
-      setResult(
-        mastered
-          ? 'Line mastered! You can practice level 3 again.'
-          : missedPlies.length > 0
-            ? `Attempt complete with mistakes. Return to level ${nextLevel}.`
-            : `Level ${level} complete! Continue to level ${nextLevel}.`,
-      )
-    } else {
-      setResult('Your attempt finished, but the training level could not be saved.')
-    }
+  const finishPractice = useCallback(
+    (ending?: string, completedMoves: typeof allMoves = allMoves) => {
+      const completedTotal = completedMoves.filter((move) => move.color === side).length
+      const missedCount = missedPlies.length
+      onComplete(line.id, side, completedTotal - missedCount, completedTotal)
+      const { level: nextLevel, mastered } = advanceOpeningLevel(level, missedCount > 0)
+      const transition = mastered
+        ? '🎉 GM Level completed! You can practice it again.'
+        : missedCount > 0
+          ? 'Level completed with mistakes.'
+          : '🎉 Level completed.'
+      const message = ending ? `${ending} ${transition}` : transition
+      if (onLevelChange(line.id, side, nextLevel, mastered, errors.length)) {
+        setResult(message)
+      } else {
+        setResult('Your attempt finished, but the training level could not be saved.')
+      }
+      setReview({ moves: completedMoves, errors })
+      setPhase('result')
+    },
+    [allMoves, errors, level, line.id, missedPlies, onComplete, onLevelChange, side],
+  )
+
+  const finishIncomplete = useCallback(() => {
+    setResult('The game ended before you completed the required moves. Restart to try again.')
     setPhase('result')
-  }, [level, line.id, missedPlies, onComplete, onLevelChange, side, total])
+  }, [])
+
+  useEffect(
+    () => () => {
+      analysisId.current++
+      analysisRequest.current?.abort()
+      explorerRequest.current?.abort()
+      explorerRequest.current = null
+    },
+    [],
+  )
 
   useEffect(() => {
     if (phase !== 'playing' || level !== 0 || finished) return
@@ -938,235 +1193,585 @@ function OpeningBoard({
         setPhase('result')
       }
       setPly((current) => current + 1)
-    }, 650)
+    }, PLAYBACK_DELAY)
     return () => window.clearTimeout(timer)
   }, [phase, level, finished, ply, game.moves.length, onLevelChange, line.id, side])
 
   useEffect(() => {
-    if (!opponentTurn || wrong) return
+    if (!opponentTurn || wrong || evaluating || fetchingExplorer) return
+    const fixedMove = game.moves[ply]
+    if (!fixedMove) return
     const timer = window.setTimeout(() => {
-      if (ply + 1 === game.moves.length) finishPractice()
+      if (ply + 1 === game.moves.length && level < 4) finishPractice()
+      else if (terminal(game.fens[ply + 1]!)) {
+        if (level >= 4) finishIncomplete()
+        else finishPractice('The line ends here.')
+      }
       setPly((current) => current + 1)
-    }, 650)
+    }, OPPONENT_DELAY)
     return () => window.clearTimeout(timer)
-  }, [opponentTurn, wrong, ply, game.moves.length, finishPractice])
+  }, [opponentTurn, wrong, evaluating, fetchingExplorer, game, ply, level, finishPractice, finishIncomplete])
 
   useEffect(() => {
     if (!wrong) return
-    const timer = window.setTimeout(() => setWrong(null), 700)
+    const timer = window.setTimeout(() => setWrong(null), WRONG_MOVE_DELAY)
     return () => window.clearTimeout(timer)
   }, [wrong])
 
+  const playExplorerMove = async (position: string, playedMoves: typeof allMoves) => {
+    if (!auth.token) {
+      setLichessError('Connect to Lichess to continue this training level.')
+      return
+    }
+    const controller = new AbortController()
+    explorerRequest.current?.abort()
+    explorerRequest.current = controller
+    setFetchingExplorer(true)
+    setLichessError('')
+    const rating = ratingGroupForLevel(level as ExplorerLevel)
+    const started = performance.now()
+    try {
+      const move = await fetchOpeningMove(position, rating, auth.token, controller.signal)
+      if (controller.signal.aborted) return
+      if (!move) {
+        setLichessError(
+          `No rapid games in the Lichess rating group ${rating} continue this position. Restart to try another line.`,
+        )
+        return
+      }
+      const next = play(explore(position), move.uci.slice(0, 2), move.uci.slice(2, 4), move.uci[4])
+      if (!next) {
+        setLichessError('Lichess returned a move that is illegal in this position.')
+        return
+      }
+      if (
+        !(await waitForDelay(
+          Math.max(0, OPPONENT_DELAY - (performance.now() - started)),
+          controller.signal,
+        )) ||
+        controller.signal.aborted
+      )
+        return
+      const nextFen = fenOf(next)
+      const newMove: (typeof game.moves)[number] = {
+        ply: playedMoves.length + 1,
+        color: position.split(' ')[1] === 'b' ? 'b' : 'w',
+        number: Number(position.split(' ')[5] ?? 1),
+        san: sanOf(position, move.uci),
+        uci: move.uci,
+        promotion: move.uci.length === 5,
+        fenBefore: position,
+        fenAfter: nextFen,
+        clockMs: null,
+      }
+      setExtraMoves((current) => [...current, newMove])
+      setExtraFens((current) => [...current, nextFen])
+      setPly((current) => current + 1)
+      if (terminal(nextFen)) finishIncomplete()
+    } catch (error) {
+      if (controller.signal.aborted) return
+      if (error instanceof LichessExplorerError && error.kind === 'unauthorized') {
+        clearLichessToken()
+        setAuth({ token: null, error: '' })
+      }
+      setLichessError(error instanceof Error ? error.message : 'Lichess Opening Explorer failed.')
+    } finally {
+      if (explorerRequest.current === controller) {
+        explorerRequest.current = null
+        setFetchingExplorer(false)
+      }
+    }
+  }
+
   const tryMove = (from: string, to: string) => {
     if (!canPlay) return false
-    const expected = game.moves[ply]!
-    const promotion = expected.uci.slice(0, 4) === from + to ? expected.uci[4] : undefined
+    const expected = game.moves[ply]
+    const promotion = expected?.uci.slice(0, 4) === from + to ? expected.uci[4] : undefined
     const next = play(explore(fen), from, to, promotion)
     if (!next) return false
     const uci = next.moves[0]!
     setPicked(null)
-    if (uci === expected.uci) {
-      setAttempt(null)
-      const done = game.moves.slice(0, ply + 1).filter((move) => move.color === side).length
-      onAdvance(line.id, side, done, total)
-      if (ply + 1 === game.moves.length) finishPractice()
-      setPly(ply + 1)
-    } else {
-      setAttempt('wrong')
-      setMissedPlies((missed) => (missed.includes(ply) ? missed : [...missed, ply]))
-      setWrong({ fen: fenOf(next), uci })
+    setLichessError('')
+    setEngineError('')
+
+    if (expected) {
+      if (uci === expected.uci) {
+        setAttempt(null)
+        const done = game.moves.slice(0, ply + 1).filter((move) => move.color === side).length
+        onAdvance(line.id, side, done, game.moves.filter((move) => move.color === side).length)
+        if (level < 4 && ply + 1 === game.moves.length) finishPractice()
+        else if (terminal(fenOf(next))) {
+          if (level >= 4) finishIncomplete()
+          else finishPractice('The line ends here.')
+        }
+        setPly(ply + 1)
+        if (
+          level >= 4 &&
+          ply + 1 === game.moves.length &&
+          !terminal(fenOf(next)) &&
+          fenOf(next).split(' ')[1] !== side
+        )
+          void playExplorerMove(fenOf(next), allMoves)
+      } else {
+        setAttempt('wrong')
+        setMissedPlies((missed) => (missed.includes(ply) ? missed : [...missed, ply]))
+        setErrors((current) => [
+          ...current,
+          { ply, uci, san: sanOf(fen, uci), fenBefore: fen, fenAfter: fenOf(next), kind: 'Incorrect move' },
+        ])
+        setWrong({ fen: fenOf(next), uci })
+      }
+      return true
     }
+
+    if (level < 4) return false
+    const controller = new AbortController()
+    analysisRequest.current?.abort()
+    analysisRequest.current = controller
+    const id = ++analysisId.current
+    const limits = PRESETS[prefs.preset]
+    const nextFen = fenOf(next)
+    setPendingMove({ fen: nextFen, uci })
+    setEvaluating(true)
+    const delay = waitForDelay(WRONG_MOVE_DELAY, controller.signal)
+    void (async () => {
+      try {
+        const analysis = getLiveAnalysis()
+        const before = await analysis.analyse(fen, limits, controller.signal)
+        const after = await analysis.analyse(nextFen, limits, controller.signal)
+        if (controller.signal.aborted || analysisId.current !== id) return
+        const mover: (typeof game.moves)[number]['color'] = sideToMove
+        const loss = openingMoveLoss(before.eval.cp, after.eval.cp, mover)
+        const decision = openingMoveDecision(loss, before.line[0] === uci)
+        if (decision !== 'accept') {
+          const previousMove = allMoves[ply - 1]
+          const previous = previousMove
+            ? {
+                move: previousMove,
+                evaluation: await analysis.analyse(previousMove.fenBefore, limits, controller.signal),
+              }
+            : undefined
+          const book = await loadBook()
+          if (controller.signal.aborted || analysisId.current !== id) return
+          const kind = openingAttemptLabel(
+            {
+              ply: ply + 1,
+              color: mover,
+              number: Number(fen.split(' ')[5] ?? 1),
+              san: sanOf(fen, uci),
+              uci,
+              promotion: uci.length === 5,
+              fenBefore: fen,
+              fenAfter: nextFen,
+              clockMs: null,
+            },
+            before,
+            after,
+            book,
+            settingsFor(prefs.preset, ENGINE_ID),
+            previous,
+          )
+          if (!(await delay) || controller.signal.aborted || analysisId.current !== id) return
+          setAttempt(decision === 'inaccuracy' ? 'inaccurate' : 'wrong')
+          setMissedPlies((missed) => (missed.includes(ply) ? missed : [...missed, ply]))
+          setErrors((current) => [
+            ...current,
+            {
+              ply,
+              uci,
+              san: sanOf(fen, uci),
+              fenBefore: fen,
+              fenAfter: nextFen,
+              kind,
+            },
+          ])
+          return
+        }
+
+        const newMove: (typeof game.moves)[number] = {
+          ply: allMoves.length + 1,
+          color: mover,
+          number: Number(fen.split(' ')[5] ?? 1),
+          san: sanOf(fen, uci),
+          uci,
+          promotion: uci.length === 5,
+          fenBefore: fen,
+          fenAfter: nextFen,
+          clockMs: null,
+        }
+        const completedMoves = [...allMoves, newMove]
+        setExtraMoves((current) => [...current, newMove])
+        setExtraFens((current) => [...current, nextFen])
+        setAttempt(null)
+        setPly(ply + 1)
+        if (extraPlayed + 1 >= extraRequired) finishPractice(undefined, completedMoves)
+        else if (terminal(nextFen)) finishIncomplete()
+        else void playExplorerMove(nextFen, completedMoves)
+      } catch (error) {
+        if (!controller.signal.aborted && analysisId.current === id) {
+          setEngineError(error instanceof Error ? error.message : 'Stockfish could not evaluate this move.')
+          await delay
+        }
+      } finally {
+        controller.abort()
+        if (analysisId.current === id) {
+          setPendingMove(null)
+          setEvaluating(false)
+          analysisRequest.current = null
+        }
+      }
+    })()
     return true
+  }
+
+  const levelName = openingLevelName(level)
+  const rating = level >= 4 ? ratingGroupForLevel(level as ExplorerLevel) : null
+  const ratingDescription =
+    rating === null
+      ? ''
+      : rating === 0
+        ? 'Lichess Rapid ratings 0–999 (the closest available group to 400).'
+        : rating === 2500
+          ? 'Lichess Rapid ratings 2500 and above.'
+          : `Lichess Rapid ratings ${rating}–${rating + (rating === 2200 ? 299 : 199)}.`
+
+  const startPractice = () => {
+    setPly(0)
+    setExtraMoves([])
+    setExtraFens([])
+    setPicked(null)
+    setWrong(null)
+    setPendingMove(null)
+    setAttempt(null)
+    setMissedPlies([])
+    setErrors([])
+    setReview(null)
+    setLichessError('')
+    setEngineError('')
+    setResult('')
+    setPhase('playing')
   }
 
   return (
     <>
       <div className="learn-level" aria-label="Training level">
         <div>
-          <strong>Level {level} of 3</strong>
+          <strong>{level <= 3 ? `Level ${level} of 3` : levelName}</strong>
           <span>
-            {
-              ['View the line', 'Practice with arrows', 'Practice with piece hints', 'Play independently'][
-                level
-              ]
-            }
+            {level <= 3
+              ? ['View the line', 'Practice with arrows', 'Practice with piece hints', 'Play independently'][
+                  level
+                ]
+              : ratingDescription}
           </span>
         </div>
         {savedLevel?.mastered && <span className="pill">Mastered</span>}
-        <progress max={3} value={level} aria-label="Training level progress" />
       </div>
-      <div className="stage train-stage">
-        <section className="boardcol" aria-label="Opening board">
-          <div
-            className="board"
-            role="group"
-            aria-label={`Board, ${fen.split(' ')[1] === 'w' ? 'White' : 'Black'} to move`}
-          >
-            <div>
-              <VisibleChessboard
-                active
-                options={{
-                  position: fen,
-                  boardOrientation: side === 'w' ? 'white' : 'black',
-                  pieces: NAMED_PIECES,
-                  allowDragging: canPlay,
-                  dropSquareStyle: { boxShadow: 'none' },
-                  animationDurationInMs: reducedMotion() ? 0 : 160,
-                  lightSquareStyle: { backgroundColor: squares.light },
-                  darkSquareStyle: { backgroundColor: squares.dark },
-                  onPieceDrag: ({ piece, square }) => setPicked(piece.pieceType[0] === side ? square : null),
-                  onPieceDragCancel: () => setPicked(null),
-                  onPieceDrop: ({ sourceSquare, targetSquare }) =>
-                    targetSquare !== null && tryMove(sourceSquare, targetSquare),
-                  onSquareClick: ({ piece, square }) => {
-                    if (!canPlay) return
-                    if (picked && dots.includes(square) && tryMove(picked, square)) return
-                    setPicked(piece?.pieceType[0] === side && square !== picked ? square : null)
-                  },
-                  arrows,
-                  squareRenderer: ({ piece, square, children }) => {
-                    const highlighted =
-                      last?.slice(0, 2) === square || last?.slice(2, 4) === square || picked === square
-                    const target = dots.includes(square)
-                    return (
-                      <div
-                        style={{
-                          width: '100%',
-                          height: '100%',
-                          position: 'relative',
-                          backgroundColor: highlighted
-                            ? isLight(square)
-                              ? squares.hlLight
-                              : squares.hlDark
-                            : undefined,
-                        }}
-                      >
-                        {children}
-                        {hint?.slice(0, 2) === square && level === 2 && (
-                          <span className="learn-piece-hint" aria-hidden="true" />
-                        )}
-                        {target && (
-                          <LegalMoveMarker capture={!!piece && piece.pieceType[0] !== side} hovered={false} />
-                        )}
-                        {wrong?.uci.slice(2, 4) === square && (
-                          <span className="wrong-move-marker" role="img" aria-label="Incorrect move">
-                            ×
-                          </span>
-                        )}
-                      </div>
-                    )
-                  },
-                }}
-              />
-            </div>
-          </div>
-        </section>
-        <div className="stage-side train-panel">
-          {level === 0 ? (
+      {level >= 4 && (
+        <div className="learn-lichess">
+          <p className="muted">
+            After this variation, play {extraRequired} good moves against Lichess Rapid replies from this
+            rating group. Replies played at least 5% of the time are chosen in proportion to their frequency.
+            Inaccuracies and worse are taken back; any error drops your level after the run.
+          </p>
+          {auth.error && <p role="alert">{auth.error}</p>}
+          {lichessError && (
+            <p className="error" role="alert">
+              {lichessError}
+            </p>
+          )}
+          {engineError && (
+            <p className="error" role="alert">
+              Stockfish could not evaluate the move: {engineError}
+            </p>
+          )}
+          {auth.token ? (
             <>
-              <h3>View the line</h3>
-              <p className="muted">
-                Watch the moves play automatically, or step through them before starting.
-              </p>
-              <div className="learn-actions">
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={phase === 'playing' || ply === 0}
-                  onClick={() => setPly(ply - 1)}
-                >
-                  Previous move
-                </button>
-                <button
-                  type="button"
-                  className="secondary"
-                  disabled={phase === 'playing' || finished}
-                  onClick={() => setPly(ply + 1)}
-                >
-                  Next move
-                </button>
-              </div>
-              <div className="learn-moves" aria-label="Opening moves">
-                {game.moves.map((move, index) => (
-                  <button
-                    key={move.ply}
-                    type="button"
-                    disabled={phase === 'playing'}
-                    aria-current={ply === index + 1 ? 'step' : undefined}
-                    onClick={() => setPly(index + 1)}
-                  >
-                    {move.color === 'w' ? `${move.number}. ` : ''}
-                    {move.san}
-                  </button>
-                ))}
-              </div>
+              <button
+                type="button"
+                className="secondary"
+                disabled={phase === 'playing'}
+                onClick={() => {
+                  clearLichessToken()
+                  setAuth({ token: null, error: '' })
+                }}
+              >
+                Forget Lichess session on this tab
+              </button>
+              <a href="https://lichess.org/account/oauth/token" target="_blank" rel="noreferrer">
+                Revoke access on Lichess
+              </a>
             </>
           ) : (
-            <>
-              <h3>Practice as {side === 'w' ? 'White' : 'Black'}</h3>
-              {phase === 'playing' && (
-                <p role="status">
-                  {opponentTurn
-                    ? 'Opponent plays…'
-                    : attempt === 'wrong'
-                      ? 'Incorrect move. Try again.'
-                      : 'Your move.'}
-                </p>
-              )}
-              {hint && (
-                <p className="muted">
-                  {level === 1
-                    ? `Hint: ${hint.slice(0, 2)} to ${hint.slice(2, 4)}.`
-                    : `Hint: move the piece on ${hint.slice(0, 2)}.`}
-                </p>
-              )}
-              <p className="muted">
-                {ply} of {game.moves.length} moves played
-              </p>
-              <progress max={game.moves.length} value={ply} aria-label="Practice progress" />
-              {total === 0 && (
-                <p role="status">
-                  This line has no moves for {side === 'w' ? 'White' : 'Black'}. Choose another side or line.
-                </p>
-              )}
-            </>
-          )}
-          {phase === 'result' && <p role="status">{result}</p>}
-          {phase !== 'playing' ? (
-            <button
-              type="button"
-              className="cta"
-              disabled={levelError || (level > 0 && total === 0)}
-              onClick={() => {
-                setPly(0)
-                setPicked(null)
-                setWrong(null)
-                setAttempt(null)
-                setMissedPlies([])
-                setResult('')
-                setPhase('playing')
-              }}
-            >
-              {level === 0 ? 'Start playback' : `Start level ${level}`}
-            </button>
-          ) : level > 0 ? (
             <button
               type="button"
               className="secondary"
+              disabled={phase === 'playing' && !opponentTurn}
               onClick={() => {
-                setPly(0)
-                setPicked(null)
-                setWrong(null)
-                setAttempt(null)
-                setMissedPlies([])
-                setPhase('ready')
+                void beginLichessLogin().catch((error: unknown) =>
+                  setAuth({
+                    token: null,
+                    error: error instanceof Error ? error.message : 'Could not start Lichess login.',
+                  }),
+                )
               }}
             >
-              Restart
+              Connect Lichess
             </button>
-          ) : null}
+          )}
+          {opponentTurn && lichessError && (
+            <button type="button" className="secondary" onClick={() => void playExplorerMove(fen, allMoves)}>
+              Retry Lichess
+            </button>
+          )}
         </div>
-      </div>
+      )}
+      {phase === 'result' && review ? (
+        <OpeningTrainingReview
+          initialFen={game.fens[0]!}
+          moves={review.moves}
+          errors={review.errors}
+          side={side}
+          variation={line.name}
+          result={result}
+          nextLevel={levelName}
+          startDisabled={levelError || (level >= 4 && !auth.token)}
+          onStart={startPractice}
+        />
+      ) : (
+        <div className="stage train-stage">
+          <section className="boardcol" aria-label="Opening board">
+            <div
+              className="board"
+              role="group"
+              aria-label={`Board, ${fen.split(' ')[1] === 'w' ? 'White' : 'Black'} to move`}
+            >
+              <div>
+                <VisibleChessboard
+                  active
+                  options={{
+                    position: fen,
+                    boardOrientation: side === 'w' ? 'white' : 'black',
+                    pieces: NAMED_PIECES,
+                    allowDragging: canPlay,
+                    dropSquareStyle: { boxShadow: 'none' },
+                    animationDurationInMs: reducedMotion() ? 0 : 160,
+                    lightSquareStyle: { backgroundColor: squares.light },
+                    darkSquareStyle: { backgroundColor: squares.dark },
+                    onPieceDrag: ({ piece, square }) =>
+                      setPicked(piece.pieceType[0] === side ? square : null),
+                    onPieceDragCancel: () => setPicked(null),
+                    onPieceDrop: ({ sourceSquare, targetSquare }) =>
+                      targetSquare !== null && tryMove(sourceSquare, targetSquare),
+                    onSquareClick: ({ piece, square }) => {
+                      if (!canPlay) return
+                      if (picked && dots.includes(square) && tryMove(picked, square)) return
+                      setPicked(piece?.pieceType[0] === side && square !== picked ? square : null)
+                    },
+                    arrows,
+                    squareRenderer: ({ piece, square, children }) => {
+                      const highlighted =
+                        last?.slice(0, 2) === square || last?.slice(2, 4) === square || picked === square
+                      const target = dots.includes(square)
+                      return (
+                        <div
+                          style={{
+                            width: '100%',
+                            height: '100%',
+                            position: 'relative',
+                            backgroundColor: highlighted
+                              ? isLight(square)
+                                ? squares.hlLight
+                                : squares.hlDark
+                              : undefined,
+                          }}
+                        >
+                          {children}
+                          {hint?.slice(0, 2) === square && level === 2 && (
+                            <span className="learn-piece-hint" aria-hidden="true" />
+                          )}
+                          {target && (
+                            <LegalMoveMarker
+                              capture={!!piece && piece.pieceType[0] !== side}
+                              hovered={false}
+                            />
+                          )}
+                          {wrong?.uci.slice(2, 4) === square && (
+                            <span className="wrong-move-marker" role="img" aria-label="Incorrect move">
+                              ×
+                            </span>
+                          )}
+                        </div>
+                      )
+                    },
+                  }}
+                />
+              </div>
+            </div>
+          </section>
+          <div className="stage-side train-panel">
+            {level === 0 ? (
+              <>
+                <h3>View the line</h3>
+                <p className="muted">
+                  Watch the moves play automatically, or step through them before starting.
+                </p>
+                <div className="learn-actions">
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={phase === 'playing' || ply === 0}
+                    onClick={() => setPly(ply - 1)}
+                  >
+                    Previous move
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary"
+                    disabled={phase === 'playing' || finished}
+                    onClick={() => setPly(ply + 1)}
+                  >
+                    Next move
+                  </button>
+                </div>
+                <div className="learn-moves" aria-label="Opening moves">
+                  {game.moves.map((move, index) => (
+                    <button
+                      key={move.ply}
+                      type="button"
+                      disabled={phase === 'playing'}
+                      aria-current={ply === index + 1 ? 'step' : undefined}
+                      onClick={() => setPly(index + 1)}
+                    >
+                      {move.color === 'w' ? `${move.number}. ` : ''}
+                      {move.san}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <h3>Practice as {side === 'w' ? 'White' : 'Black'}</h3>
+                {phase === 'playing' && (
+                  <p role="status">
+                    {evaluating
+                      ? 'Stockfish is evaluating your move…'
+                      : fetchingExplorer
+                        ? 'Looking up a Lichess reply…'
+                        : wrong
+                          ? attempt === 'inaccurate'
+                            ? 'Inaccuracy. Taking your move back…'
+                            : 'Incorrect move. Taking it back…'
+                          : opponentTurn
+                            ? 'Opponent plays…'
+                            : attempt === 'wrong'
+                              ? level >= 4 && ply >= game.moves.length
+                                ? 'Stockfish rejected that move. Try again.'
+                                : 'Incorrect move. Try again.'
+                              : attempt === 'inaccurate'
+                                ? 'Inaccuracy taken back. Try again; your level will drop after this run.'
+                                : 'Your move.'}
+                  </p>
+                )}
+                {hint && (
+                  <p className="muted">
+                    {level === 1
+                      ? `Hint: ${hint.slice(0, 2)} to ${hint.slice(2, 4)}.`
+                      : `Hint: move the piece on ${hint.slice(0, 2)}.`}
+                  </p>
+                )}
+                {level >= 4 ? (
+                  <>
+                    <p className="muted">
+                      {ply >= game.moves.length
+                        ? 'Variation complete ✓'
+                        : `Variation: ${ply} of ${game.moves.length} moves played`}
+                    </p>
+                    <div>
+                      <p className="muted">
+                        After the variation: {extraPlayed} of {extraRequired} good moves
+                      </p>
+                      <progress
+                        max={extraRequired}
+                        value={extraPlayed}
+                        aria-label="Progress after the variation"
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="muted">
+                      {ply} of {allMoves.length} moves played
+                    </p>
+                    <progress max={allMoves.length || 1} value={ply} aria-label="Practice progress" />
+                  </>
+                )}
+                {total === 0 && (
+                  <p role="status">
+                    This line has no moves for {side === 'w' ? 'White' : 'Black'}. Choose another side or
+                    line.
+                  </p>
+                )}
+              </>
+            )}
+            {phase === 'result' && <p role="status">{result}</p>}
+            {phase !== 'playing' ? (
+              <button
+                type="button"
+                className="cta"
+                disabled={levelError || (level > 0 && total === 0) || (level >= 4 && !auth.token)}
+                onClick={startPractice}
+              >
+                {level === 0 ? 'Start playback' : `Start ${levelName}`}
+              </button>
+            ) : level > 0 ? (
+              <button
+                type="button"
+                className="secondary"
+                onClick={() => {
+                  analysisRequest.current?.abort()
+                  analysisId.current++
+                  explorerRequest.current?.abort()
+                  explorerRequest.current = null
+                  setPly(0)
+                  setExtraMoves([])
+                  setExtraFens([])
+                  setPicked(null)
+                  setWrong(null)
+                  setPendingMove(null)
+                  setAttempt(null)
+                  setMissedPlies([])
+                  setErrors([])
+                  setReview(null)
+                  setEvaluating(false)
+                  setFetchingExplorer(false)
+                  setPhase('ready')
+                }}
+              >
+                Restart
+              </button>
+            ) : null}
+          </div>
+        </div>
+      )}
+      <section className="learn-statistics" aria-label="Training statistics">
+        <h3>Training statistics</h3>
+        <p className="muted">For this variation and side, since statistics tracking began.</p>
+        <div className="tiles learn-stat-tiles">
+          <div className="tile">
+            <span className="tile-label">Highest level reached</span>
+            <b className="tile-num">{openingLevelName(savedLevel?.stats?.highestLevel ?? level)}</b>
+          </div>
+          <div className="tile">
+            <span className="tile-label">Completed attempts</span>
+            <b className="tile-num">{savedLevel?.stats?.attempts ?? 0}</b>
+          </div>
+          <div className="tile">
+            <span className="tile-label">Errors</span>
+            <b className="tile-num">{savedLevel?.stats?.errors ?? 0}</b>
+          </div>
+        </div>
+      </section>
     </>
   )
 }

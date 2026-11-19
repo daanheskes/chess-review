@@ -87,29 +87,37 @@ and nothing else came close. You find the move by dragging a piece or typing it 
 answer come back later, after a day, three days, a week, until you solve them. Everything stays in your
 browser, so progress does not follow you to another device.
 
-**Openings** suggests 16 openings by side, level and style, lets you choose a bundled line and save it to a
-local repertoire for White or Black. Training starts by watching the line, then progresses through practice
-with move arrows, piece hints and finally no hints. Complete a practice without mistakes to advance; after an
-attempt with mistakes, return to the preceding level. Completing level 3 marks the line mastered, and it can
-still be practiced. Training levels are stored separately for each line and side in this browser.
-For each saved line, the repertoire shows the percentage of your moves played correctly on the first
-try in the last completed practice, separately for each side. Progress is also stored in this browser.
+**Openings** suggests 16 openings by side, level and style, and lets you save an opening to a local
+repertoire for White or Black and choose a bundled line to train. Training starts by watching the line, then
+progresses through practice with move arrows, piece hints and finally no hints. Complete a practice without
+mistakes to advance; after an attempt with mistakes, return to the preceding level. Completing level 3 marks
+the line mastered, and it can still be practiced. Training levels are stored separately for each line and
+side in this browser.
+For each saved opening, the repertoire shows the percentage of your moves played correctly on the first
+try in the last completed practice of any of its lines, separately for each side. Progress is also stored in
+this browser.
 Each opening and line has a shareable hash URL; its line cards show the furthest completed practice progress
-for the selected side. Previously completed practices count as fully practiced.
+for the selected side. When available, the opening's starting moves appear first. Shorter continuations are
+hidden only when a longer line has the same variation name and moves. Existing links and progress for hidden
+lines remain available.
+Previously completed practices count as fully practiced.
 Suggested openings have indicative difficulty and style labels and an icon for the opening side's first
 non-pawn move in an example line; individual lines can differ.
 Cards are ordered by level (Beginner, Club, Expert), then style (Solid before Aggressive).
-The star on an opening card saves or removes the first listed line for that opening and side.
-The repertoire is collapsed by default; its toggle shows the saved-line count. Removal requires confirmation,
+The star on an opening card or beside the opening's name saves or removes it for the selected side.
+Existing saved variations of the same opening are shown as one entry per side.
+The repertoire is collapsed by default; its toggle shows the saved-opening count. Removal requires confirmation,
 and practice progress is retained. When the repertoire is empty, the optional starter repertoire adds the
 London System for White and the Caro-Kann and King's Indian defenses for Black.
 Opening types are indicative, inferred from names and initial moves, and are not available for
 every line. The repertoire is stored in this browser and does not sync between devices.
-For each suggested opening, a selected main-line variation appears first; the original named lines remain
-available. Lines with the same name are grouped on one card, with their alternative continuations and
-individual progress available to expand. Repertoire cards for suggested openings lead to the opening's
+For each suggested opening, a selected main-line variation appears after the opening moves when available.
+Lines with the same name are grouped on one card, with their alternative continuations and individual
+progress available to expand. Repertoire cards lead to the opening's
 line selection. The Scandinavian recommendation follows the
 [classical main line](https://en.wikipedia.org/wiki/Scandinavian_Defence#Main_line) through 8.O-O.
+Use Watch on a line or continuation to preview its moves on the small board and replay them. Watching a
+preview does not change training levels or practice progress.
 
 Sites that host the full Stockfish network can offer an **accurate engine** as a one-time 99 MB
 download (Settings → Engine), which matches desktop Stockfish exactly; see `docs/DEPLOY.md`.

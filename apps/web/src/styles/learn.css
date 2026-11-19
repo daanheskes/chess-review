@@ -70,6 +70,25 @@
 .learn-breadcrumbs a {
   color: var(--ink);
 }
+.learn-title {
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  min-width: 0;
+}
+.learn-title h1 {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.learn-title .learn-star {
+  width: 44px;
+  height: 44px;
+  flex-basis: 44px;
+}
+.learn-title .learn-star svg {
+  width: 22px;
+  height: 22px;
+}
 .learn-line-cards {
   margin-top: var(--s-4);
 }
@@ -90,6 +109,20 @@
   flex: 1;
   font-family: var(--font-mono);
   font-size: var(--fs-sm);
+}
+.learn-line-preview {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 220px);
+}
+.learn-line-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+.learn-watch {
+  position: relative;
+  z-index: 1;
 }
 .learn-line-card progress,
 .train-panel progress {
@@ -280,12 +313,17 @@
   height: 100%;
 }
 .learn-star {
-  flex: 0 0 44px;
-  color: light-dark(var(--t-inaccuracy), var(--signal));
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  color: var(--signal);
 }
 .learn-star svg {
-  width: 22px;
-  height: 22px;
+  width: 16px;
+  height: 16px;
+}
+.learn-remove-actions button {
+  width: 120px;
 }
 .learn-card-tags {
   display: flex;
@@ -370,6 +408,17 @@
   border-radius: var(--r-sm);
   background: var(--signal);
 }
+.learn-lichess {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+  margin-top: var(--s-3);
+}
+.learn-lichess p {
+  flex-basis: 100%;
+  margin: 0;
+}
 .learn-piece-hint {
   position: absolute;
   inset: 0;
@@ -396,6 +445,27 @@
 .learn-moves button[aria-current='step'] {
   background: var(--signal);
   color: var(--on-signal);
+}
+.learn-result {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-3);
+}
+.learn-moves .learn-review-error:not([aria-current='step']) {
+  color: var(--t-mistake);
+  text-decoration: underline;
+}
+.learn-statistics {
+  display: grid;
+  gap: var(--s-2);
+  margin-top: var(--s-7);
+}
+.learn-stat-tiles {
+  margin-bottom: 0;
+}
+.learn-stat-tiles .tile-num {
+  font-size: clamp(2rem, 1.2rem + 2.4vw, 3.5rem);
 }
 @media (max-width: 920px) {
   .learn .stage {

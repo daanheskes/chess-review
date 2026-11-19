@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { curatedOpenings } from '../src/curated-openings'
 import {
   curatedOpeningIds,
+  displayOpeningLines,
   firstOpeningPiece,
   groupLinesByName,
   openingGame,
@@ -10,9 +11,73 @@ import {
   openingLineSlug,
   openingSlug,
   recommendedGroups,
+  type OpeningLine,
 } from '../src/opening-lines'
 
 describe('curated opening lines', () => {
+  it('preserves opening moves and distinct short variations while hiding same-name prefixes', () => {
+    const make = (name: string, pgn: string): OpeningLine => ({
+      id: `${name}\t${pgn}`,
+      eco: 'B01',
+      name,
+      pgn,
+      types: [],
+    })
+    const base = make('Opening', '1. e4 d5')
+    const sameNameContinuation = make('Opening', '1. e4 d5 2. exd5')
+    const short = make('Opening: Variation', '1. e4 d5 2. exd5')
+    const longer = make('Opening: Variation', '1. e4 d5 2. exd5 Qxd5')
+    const branch = make('Opening: Variation', '1. e4 d5 2. exd5 Nf6')
+    const other = make('Opening: Other', '1. e4 d5 2. exd5')
+    expect(
+      displayOpeningLines([longer, short, base, other, branch, sameNameContinuation], 'Opening'),
+    ).toEqual([base, longer, other, branch, sameNameContinuation])
+    expect(displayOpeningLines([short], 'Opening')).toEqual([short])
+  })
+
+  it('filters same-name prefixes across the catalogue without hiding the opening moves', () => {
+    for (const group of openingGroups) {
+      const moves = new Map(
+        group.lines.map((line) => [line.id, openingGame(line).moves.map((move) => move.san)]),
+      )
+      const base = group.lines
+        .filter((line) => line.name === group.name)
+        .reduce<OpeningLine | undefined>(
+          (shortest, line) =>
+            !shortest || moves.get(line.id)!.length < moves.get(shortest.id)!.length ? line : shortest,
+          undefined,
+        )
+      const variations = group.lines.filter((line) => {
+        const sequence = moves.get(line.id)!
+        return (
+          line !== base &&
+          !group.lines.some((other) => {
+            const continuation = moves.get(other.id)!
+            return (
+              other !== base &&
+              other.name === line.name &&
+              continuation.length > sequence.length &&
+              sequence.every((move, index) => move === continuation[index])
+            )
+          })
+        )
+      })
+      expect(
+        group.displayLines.map((line) => line.id),
+        group.name,
+      ).toEqual([...(base ? [base] : []), ...variations].map((line) => line.id))
+    }
+  })
+
+  it('shows Ponziani opening moves and distinct named variations', () => {
+    const group = openingGroups.find((item) => item.name === 'Ponziani Opening')!
+    expect(group.displayLines[0]!.pgn).toBe('1. e4 e5 2. Nf3 Nc6 3. c3')
+    expect(group.displayLines.map((line) => line.name)).toContain('Ponziani Opening: Romanishin Variation')
+    expect(group.displayLines.map((line) => line.name)).toContain('Ponziani Opening: Réti Variation')
+    expect(group.displayLines.some((line) => line.pgn === '1. e4 e5 2. Nf3 Nc6 3. c3 Nf6')).toBe(false)
+    expect(group.lines.some((line) => line.pgn === '1. e4 e5 2. Nf3 Nc6 3. c3 Nf6')).toBe(true)
+  })
+
   it('keeps every recommendation playable, sufficiently long and in its opening family', () => {
     for (const curated of curatedOpenings) {
       const group = openingGroups.find((item) => item.name === curated.group)

@@ -17,14 +17,15 @@ import {
 } from '@chessreview/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { EvalGraph } from './EvalGraph'
-import { explore, fenOf, lineMoves, play, stepTo, targets, type Exploration } from './explore'
+import { EvalBar } from './EvalBar'
+import { explore, fenOf, play, stepTo, targets, type Exploration } from './explore'
+import { ExplorePanel, MoveChips } from './ExplorePanel'
 import { cancelReview, downloadReview, useLiveEval, useReviewState } from './hooks'
 import { LEGAL_MOVE_HOVER_COLOR, LegalMoveMarker, SQUARE_MARK_COLOR } from './LegalMoveMarker'
 import { TimeChart } from './TimeChart'
 import { ERRORS, META, ORDER, evalText, isKeyMoment } from './labels'
 import { BOARDS, usePrefs } from './prefs'
 import { NAMED_PIECES, isLight, reducedMotion, VisibleChessboard } from './pieces'
-import type { LiveEval } from './services'
 import { AppHeader } from './AppHeader'
 import { IconButton } from './icons'
 import { overlayFor } from './tactics'
@@ -646,23 +647,6 @@ function PlayerTag({
   )
 }
 
-function EvalBar({ win, evalLabel, orientation }: { win: number; evalLabel: string; orientation: Side }) {
-  const whiteOnBottom = orientation === 'white'
-  const leadWhite = win >= 50
-  const labelAtBottom = leadWhite === whiteOnBottom
-  return (
-    <div className="evalbar" role="img" aria-label={`Evaluation ${evalLabel}`}>
-      <div className="evalbar-white" style={{ height: `${win}%`, [whiteOnBottom ? 'bottom' : 'top']: 0 }} />
-      <span
-        className={`evalbar-label ${leadWhite ? 'on-white' : 'on-black'}`}
-        style={{ [labelAtBottom ? 'bottom' : 'top']: 4 }}
-      >
-        {evalLabel}
-      </span>
-    </div>
-  )
-}
-
 function PlayerSummary({
   name,
   acc,
@@ -872,92 +856,6 @@ function Commentary({
           <p className="muted">Step with the arrow keys, click a move, or click the graph below.</p>
         </>
       )}
-    </div>
-  )
-}
-
-/** A line as buttons, one per move; `current` marks the move on the board. */
-function MoveChips({
-  fen,
-  line,
-  label,
-  current,
-  onPick,
-}: {
-  fen: string
-  line: readonly string[]
-  label: string
-  current?: number
-  onPick: (index: number) => void
-}) {
-  return (
-    <span className="chips" role="list" aria-label={label}>
-      {lineMoves(fen, line).map((m) => (
-        <span role="listitem" key={m.index}>
-          <button className="chip" aria-current={m.index === current} onClick={() => onPick(m.index)}>
-            {m.text}
-          </button>
-        </span>
-      ))}
-    </span>
-  )
-}
-
-/** Free analysis: what the user is trying, and what the engine thinks of it. Nothing here is saved. */
-function ExplorePanel({
-  x,
-  live,
-  thinking,
-  onChange,
-  onExit,
-}: {
-  x: Exploration
-  live: LiveEval | undefined
-  thinking: boolean
-  onChange: (x: Exploration) => void
-  onExit: () => void
-}) {
-  const fen = fenOf(x)
-  return (
-    <div className="comment explore" aria-live="polite">
-      <h2>Exploring</h2>
-      <p className="muted">Try moves on the board. They are not part of the review and are not saved.</p>
-      <p className="nums explore-eval">
-        <b>{thinking || !live ? 'Thinking…' : evalText(live.eval)}</b>
-        {live && !thinking && live.depth > 0 && <span className="muted"> depth {live.depth}</span>}
-      </p>
-      {live && !thinking && live.line.length > 0 && (
-        <div className="bestline">
-          <span className="muted">Engine</span>
-          <MoveChips
-            fen={fen}
-            line={live.line.slice(0, 8)}
-            label="Engine line"
-            onPick={(i) =>
-              onChange(
-                explore(x.root, [...x.moves.slice(0, x.at), ...live.line.slice(0, i + 1)], x.at + i + 1),
-              )
-            }
-          />
-        </div>
-      )}
-      <div className="bestline">
-        <span className="muted">Moves</span>
-        {x.moves.length ? (
-          <MoveChips
-            fen={x.root}
-            line={x.moves}
-            label="Your moves"
-            current={x.at - 1}
-            onPick={(i) => onChange(stepTo(x, i + 1))}
-          />
-        ) : (
-          <span className="muted"> none yet</span>
-        )}
-      </div>
-      <button className="secondary" onClick={onExit}>
-        Back to the game
-      </button>
     </div>
   )
 }

@@ -26,7 +26,7 @@ Chess game review that runs entirely in the browser (Stockfish WASM in Web Worke
 - `packages/core` must reproduce the Python golden fixtures (`packages/core/test/fixtures/`) exactly. To change a
   review rule (label thresholds, accuracy, `ANALYSIS_VERSION`), follow "Changing a rule" in CONTRIBUTING.md.
   Never edit a fixture by hand.
-- No LLM calls, telemetry or third-party APIs. Widen the CSP only for one named origin, with an e2e test for it.
+- No LLM calls and telemetry. Widen the CSP only for one named origin, with an e2e test for it.
 - `react-hooks` lint is strict: derive state, load data with `useAsync`, never `setState` in an effect.
 - UI design rules (palette, type, one radius, no gradients or card grids): "Things to avoid" in CONTRIBUTING.md.
 - `main` takes PRs only. Use the template: Summary, Evidence, Decisions, Not done.

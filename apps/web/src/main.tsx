@@ -15,10 +15,22 @@ if (getPrefs().engine === 'accurate') {
   )
 }
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+async function start(): Promise<void> {
+  let lichessLoginError: string | null = null
+  try {
+    const { finishLichessLogin } = await import('./services/lichess-auth')
+    await finishLichessLogin()
+  } catch (error) {
+    lichessLoginError = error instanceof Error ? error.message : 'Lichess login failed.'
+  }
 
-registerServiceWorker()
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <App lichessLoginError={lichessLoginError} />
+    </StrictMode>,
+  )
+
+  registerServiceWorker()
+}
+
+void start()
