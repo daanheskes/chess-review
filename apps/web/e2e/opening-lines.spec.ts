@@ -163,6 +163,123 @@ test('offers a hint after consecutive errors and reviews an unfinished attempt o
   await expect(statistics.locator('.tile').filter({ hasText: 'Errors' })).toContainText('5')
 })
 
+test('giving up during the forced variation does not lower the level or record errors', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/#/openings/ponziani-opening/ponziani-opening-jaenisch-counterattack-1jjacgq?side=w')
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'chessreview.opening-levels',
+      JSON.stringify([
+        {
+          id: 'C44\tPonziani Opening: Jaenisch Counterattack\t1. e4 e5 2. Nf3 Nc6 3. c3 Nf6',
+          side: 'w',
+          level: 4,
+          mastered: false,
+        },
+      ]),
+    )
+    sessionStorage.setItem('chessreview.lichess-token', 'test-token')
+  })
+  await page.reload()
+  await page.clock.install()
+  await page.clock.pauseAt(new Date())
+  await page.getByRole('button', { name: 'Start Level 4' }).click()
+  for (let count = 0; count < 3; count++) {
+    await page.getByRole('button', { name: 'White pawn, d2' }).click()
+    await page.locator('[data-square="d4"]').click()
+    await expect(page.getByRole('img', { name: 'Incorrect move' })).toBeVisible()
+    await page.clock.runFor(50)
+    await page.clock.runFor(1000)
+    await page.clock.runFor(50)
+    await expect(page.getByRole('button', { name: 'White pawn, d2' })).toBeEnabled()
+  }
+  await page.getByRole('button', { name: 'Give up' }).click()
+  await expect(page.getByText('You gave up. Your level stays the same.')).toBeVisible()
+  await expect(page.getByLabel('Training level').getByText('Level 4', { exact: true })).toBeVisible()
+  await expect(page.getByLabel('Practice moves').getByRole('button', { name: /Incorrect move/ })).toHaveCount(
+    0,
+  )
+  const statistics = page.getByLabel('Training statistics')
+  await expect(statistics.locator('.tile').filter({ hasText: 'Completed attempts' })).toContainText('0')
+  await expect(statistics.locator('.tile').filter({ hasText: 'Errors' })).toContainText('0')
+})
+
+test('forced variation mistakes do not prevent advancing or appear in the review', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.route('**/engine/stockfish-19-lite-single.js', (route) =>
+    route.fulfill({
+      contentType: 'text/javascript',
+      body: `
+        let fen = '';
+        self.onmessage = ({ data }) => {
+          if (data === 'uci') postMessage('uciok');
+          else if (data === 'isready') postMessage('readyok');
+          else if (data.startsWith('position fen ')) fen = data.slice(13);
+          else if (data.startsWith('go ')) {
+            const best = fen.split(' ')[1] === 'b' ? 'a7a6' : 'a2a3';
+            postMessage('info depth 14 nodes 400000 score cp 0 pv ' + best);
+            postMessage('bestmove ' + best);
+          }
+        };
+      `,
+    }),
+  )
+  await page.route('https://explorer.lichess.org/**', (route) =>
+    route.fulfill({
+      status: 200,
+      headers: {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, OPTIONS',
+        'access-control-allow-headers': 'authorization',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({ moves: [{ uci: 'd7d5', san: 'd5', white: 40, draws: 20, black: 40 }] }),
+    }),
+  )
+  await page.goto('/#/openings/ponziani-opening/ponziani-opening-jaenisch-counterattack-1jjacgq?side=w')
+  await page.evaluate(() => {
+    localStorage.setItem(
+      'chessreview.opening-levels',
+      JSON.stringify([
+        {
+          id: 'C44\tPonziani Opening: Jaenisch Counterattack\t1. e4 e5 2. Nf3 Nc6 3. c3 Nf6',
+          side: 'w',
+          level: 4,
+          mastered: false,
+        },
+      ]),
+    )
+    sessionStorage.setItem('chessreview.lichess-token', 'test-token')
+  })
+  await page.reload()
+  await page.getByRole('button', { name: 'Start Level 4' }).click()
+  await page.getByRole('button', { name: 'White pawn, d2' }).click()
+  await page.locator('[data-square="d4"]').click()
+  await expect(page.getByRole('img', { name: 'Incorrect move' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'White pawn, d2' })).toBeEnabled()
+  for (const [piece, target, reply] of [
+    ['White pawn, e2', 'e4', 'Black pawn, e5'],
+    ['White knight, g1', 'f3', 'Black knight, c6'],
+    ['White pawn, c2', 'c3', 'Black knight, f6'],
+  ]) {
+    await page.getByRole('button', { name: piece }).click()
+    await page.locator(`[data-square="${target}"]`).click()
+    await expect(page.getByRole('button', { name: reply })).toBeVisible()
+  }
+  await page.getByRole('button', { name: 'White pawn, d2' }).click()
+  await page.locator('[data-square="d4"]').click()
+  await expect(page.getByRole('button', { name: 'Black pawn, d5' })).toBeVisible()
+  await page.getByRole('button', { name: 'White bishop, f1' }).click()
+  await page.locator('[data-square="b5"]').click()
+  await expect(page.getByLabel('Training level').getByText('Level 5', { exact: true })).toBeVisible()
+  const moves = page.getByLabel('Practice moves')
+  await expect(moves.getByRole('button', { name: '1. e4', exact: true })).toBeVisible()
+  await expect(moves.getByRole('button', { name: '1. d4 (Incorrect move)' })).toHaveCount(0)
+  await expect(
+    page.getByLabel('Training statistics').locator('.tile').filter({ hasText: 'Errors' }),
+  ).toContainText('0')
+})
+
 test('giving up after the variation reviews the rejected moves and lowers the level', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.route('**/engine/stockfish-19-lite-single.js', (route) =>
@@ -543,6 +660,10 @@ test('takes back inaccurate and bad moves, allows retry, and drops a level only 
   await expect(page.getByLabel('Progress after the variation')).toHaveCount(0)
   await expect(page.getByText('After the variation:', { exact: false })).toHaveCount(0)
   await page.getByRole('button', { name: 'Start Level 4' }).click()
+  await page.getByRole('button', { name: 'White pawn, d2' }).click()
+  await page.locator('[data-square="d4"]').click()
+  await expect(page.getByRole('img', { name: 'Incorrect move' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'White pawn, d2' })).toBeEnabled()
   for (const [piece, target, reply, played] of [
     ['White pawn, e2', 'e4', 'Black pawn, e5', 2],
     ['White knight, g1', 'f3', 'Black knight, c6', 4],
@@ -599,6 +720,9 @@ test('takes back inaccurate and bad moves, allows retry, and drops a level only 
   await expect(page.getByRole('img', { name: /^Evaluation/ })).toBeVisible()
   await expect(page.getByLabel('Practice moves')).toContainText('4. h3 (Inaccuracy)')
   await expect(page.getByLabel('Practice moves')).toContainText('4. Qa4 (Blunder)')
+  await expect(
+    page.getByLabel('Practice moves').getByRole('button', { name: '1. d4 (Incorrect move)' }),
+  ).toHaveCount(0)
   await page.getByRole('button', { name: '4. h3 (Inaccuracy)' }).click()
   await expect(page.getByText('Inaccuracy: 4. h3.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'White pawn, h3' })).toBeVisible()

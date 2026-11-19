@@ -1154,15 +1154,18 @@ function OpeningBoard({
       const missedCount = missedPlies.length
       if (!gaveUp) onComplete(line.id, side, completedTotal - missedCount, completedTotal)
       const { level: nextLevel, mastered } = advanceOpeningLevel(level, missedCount > 0)
+      const unchanged = gaveUp && missedCount === 0
       const transition = gaveUp
-        ? 'You gave up. Your level dropped.'
+        ? unchanged
+          ? 'You gave up. Your level stays the same.'
+          : 'You gave up. Your level dropped.'
         : mastered
           ? '🎉 GM Level completed! You can practice it again.'
           : missedCount > 0
             ? 'Level completed with mistakes.'
             : '🎉 Level completed.'
       const message = ending ? `${ending} ${transition}` : transition
-      if (onLevelChange(line.id, side, nextLevel, mastered, errors.length, !gaveUp)) {
+      if (unchanged || onLevelChange(line.id, side, nextLevel, mastered, errors.length, !gaveUp)) {
         setResult(message)
       } else {
         setResult('Your attempt finished, but the training level could not be saved.')
@@ -1326,11 +1329,13 @@ function OpeningBoard({
       } else {
         setAttempt('wrong')
         setConsecutiveErrors((count) => count + 1)
-        setMissedPlies((missed) => (missed.includes(ply) ? missed : [...missed, ply]))
-        setErrors((current) => [
-          ...current,
-          { ply, uci, san: sanOf(fen, uci), fenBefore: fen, fenAfter: fenOf(next), kind: 'Incorrect move' },
-        ])
+        if (level < 4) {
+          setMissedPlies((missed) => (missed.includes(ply) ? missed : [...missed, ply]))
+          setErrors((current) => [
+            ...current,
+            { ply, uci, san: sanOf(fen, uci), fenBefore: fen, fenAfter: fenOf(next), kind: 'Incorrect move' },
+          ])
+        }
         setWrong({ fen: fenOf(next), uci, delay: WRONG_MOVE_DELAY })
       }
       return true

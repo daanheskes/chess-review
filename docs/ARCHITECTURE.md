@@ -182,7 +182,9 @@ lowest group is 0–999, so level 4's requested 400 rating is an approximation, 
 Users authenticate directly with Lichess using PKCE; the access token stays in tab-scoped
 `sessionStorage` and is never shipped by the app. User moves are checked by the existing Stockfish
 worker pool against the review's win-chance thresholds. Inaccuracies and worse are taken back and
-any error lowers the next level after the run. After the variation, the user must play 2 good moves
+errors after the variation lower the next level after the run. Incorrect attempts during the forced
+variation do not affect progression or error statistics and are omitted from the review, while the
+correct variation moves remain visible. After the variation, the user must play 2 good moves
 at level 4, increasing by one per level to 10 at GM. A position without Explorer
 continuations or an early game end cannot complete a level.
 
@@ -190,7 +192,7 @@ Moves appear immediately while Stockfish evaluates them. When Stockfish rejects 
 marker is shown for 300 ms before the move is taken back; mistakes in the fixed line remain visible
 for one second. Fixed and Explorer replies wait at least 650 ms.
 Two consecutive rejected moves unlock an optional hint for the current position; a third unlocks
-giving up, which lowers the level and opens a review of the moves and errors actually played.
+giving up, which opens a review and lowers the level only if an error counts toward the level.
 The hint uses the fixed variation move or the best move from the rejected move's engine analysis.
 Giving up records the errors but does not count as a completed attempt or overwrite practice progress.
 Explorer's king-to-rook castling notation is converted to standard UCI before validation and playback.
