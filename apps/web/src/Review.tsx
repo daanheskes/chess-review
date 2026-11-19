@@ -16,11 +16,12 @@ import {
   type Side,
 } from '@chessreview/core'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { reviewHash, type ReviewShare } from './App'
 import { EvalGraph } from './EvalGraph'
 import { EvalBar } from './EvalBar'
 import { explore, fenOf, play, stepTo, targets, type Exploration } from './explore'
 import { ExplorePanel, MoveChips } from './ExplorePanel'
-import { cancelReview, downloadReview, useLiveEval, useReviewState } from './hooks'
+import { cancelReview, downloadReview, useAsync, useLiveEval, useReviewState } from './hooks'
 import { LEGAL_MOVE_HOVER_COLOR, LegalMoveMarker, SQUARE_MARK_COLOR } from './LegalMoveMarker'
 import { TimeChart } from './TimeChart'
 import { ERRORS, META, ORDER, evalText, isKeyMoment } from './labels'
@@ -31,6 +32,7 @@ import { IconButton } from './icons'
 import { overlayFor } from './tactics'
 import { describePosition } from './describe'
 import { formatRemaining } from './services/eta'
+import { engineIdFor, fetchSharedGame, getReviewService } from './services'
 
 const MOVE_LIST_BADGES: ReadonlySet<Label> = new Set([
   'Brilliant',
@@ -41,30 +43,49 @@ const MOVE_LIST_BADGES: ReadonlySet<Label> = new Set([
   'Blunder',
 ])
 
-export function ReviewPage({ id, me }: { id: string; me: string | null }) {
+export function ReviewPage({ id, me, share }: { id: string; me: string | null; share: ReviewShare | null }) {
   const state = useReviewState(id)
-  if (state?.status === 'done') return <ReviewView id={id} review={state.review} me={me} />
+  const { engine } = usePrefs()
+  const recoveryKey =
+    state?.status === 'missing' && share
+      ? `${id}|${share.platform}|${share.game}|${share.month ?? ''}|${share.depth}|${engine}`
+      : null
+  const recovery = useAsync(recoveryKey, async () => {
+    if (!share) throw new Error('This shared game link is incomplete.')
+    const pgn = await fetchSharedGame(share.platform, share.game, me ?? '', share.month ?? null)
+    return (await getReviewService()).start(pgn, share.depth, engineIdFor(engine))
+  })
+  useEffect(() => {
+    if (recoveryKey && !recovery.loading && recovery.value && recovery.value !== id)
+      location.hash = reviewHash(recovery.value, me, share)
+  }, [recoveryKey, recovery.loading, recovery.value, id, me, share])
+
+  if (state?.status === 'done') return <ReviewView id={id} review={state.review} me={me} share={share} />
 
   return (
     <>
       <AppHeader active="games" />
       <main className="page narrow">
-        {state?.status === 'error' || state?.status === 'missing' ? (
+        {state?.status === 'error' || (state?.status === 'missing' && !recoveryKey) || recovery.error ? (
           <>
             <p className="error" role="alert">
-              {state.status === 'error'
-                ? state.message
-                : 'This review isn’t on this device. Reviews are stored in your browser, so open the game from your list again.'}
+              {recovery.error instanceof Error
+                ? recovery.error.message
+                : state?.status === 'error'
+                  ? state.message
+                  : 'This review isn’t on this device. Reviews are stored in your browser, so open the game from your list again.'}
             </p>
             <a href="#/">Back to your games</a>
           </>
         ) : (
           <div className="progress" role="status">
-            <h1>Analysing</h1>
+            <h1>{state?.status === 'missing' && recoveryKey ? 'Finding game' : 'Analysing'}</h1>
             <p className="muted">
-              {state?.status !== 'running' || state.total === 0
-                ? 'Starting the engine.'
-                : `${state.etaMs === null ? 'Estimating the time left' : formatRemaining(state.etaMs)}. Step ${state.done} of ${state.total}; the engine runs on your device, so speed depends on it.`}
+              {state?.status === 'missing' && recoveryKey
+                ? 'Loading the game from its public source and starting the review.'
+                : state?.status !== 'running' || state.total === 0
+                  ? 'Starting the engine.'
+                  : `${state.etaMs === null ? 'Estimating the time left' : formatRemaining(state.etaMs)}. Step ${state.done} of ${state.total}; the engine runs on your device, so speed depends on it.`}
             </p>
             <div className="bar">
               <div
@@ -95,6 +116,7 @@ export function ReviewView({
   id,
   review,
   me,
+  share = null,
   initialPly = 0,
   embedded = false,
   active = true,
@@ -102,6 +124,7 @@ export function ReviewView({
   id: string
   review: Review
   me: string | null
+  share?: ReviewShare | null
   initialPly?: number
   embedded?: boolean
   active?: boolean
@@ -119,6 +142,7 @@ export function ReviewView({
   const [showBest, setShowBest] = useState(true)
   const [showBestAlternative, setShowBestAlternative] = useState(false)
   const [tab, setTab] = useState<'moves' | 'report'>('moves')
+  const [shareMessage, setShareMessage] = useState('')
   // Moves the user is trying out on the board: never stored, never part of the review.
   const [exploring, setExploring] = useState<Exploration | null>(null)
   // A piece picked up by clicking, waiting for a click on where it goes.
@@ -280,6 +304,14 @@ export function ReviewView({
   const win = shownEval ? winPercent(shownEval.cp) : (review.winSeries[evalPly] ?? 50)
   const evalLabel = exploring && thinking ? '…' : shownEval ? evalText(shownEval) : '…'
   const opening = [review.eco, review.opening].filter(Boolean).join(' ')
+  const copyShareLink = async () => {
+    try {
+      await navigator.clipboard.writeText(location.href)
+      setShareMessage('Link copied.')
+    } catch {
+      setShareMessage('Could not copy the link. Copy it from the address bar instead.')
+    }
+  }
 
   const turn = fen.split(' ')[1]
   // The clock after each player's latest move up to the position shown, when the PGN has clocks.
@@ -306,6 +338,19 @@ export function ReviewView({
             <span className="pill">{review.result.replace('-', '–')}</span>
             {[h.Termination, opening, when].filter(Boolean).join(', ')}
           </p>
+          {share && (
+            <p>
+              <button className="link" onClick={() => void copyShareLink()}>
+                Copy share link
+              </button>
+              {shareMessage && (
+                <span className="muted" role="status">
+                  {' '}
+                  {shareMessage}
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         <div className="stage">

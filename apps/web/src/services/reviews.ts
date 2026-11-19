@@ -47,6 +47,7 @@ export interface ReviewServiceDeps {
  */
 export class ReviewService {
   private jobs = new Map<string, Job>()
+  private pendingListeners = new Map<string, Set<(s: JobState) => void>>()
   private queue: Promise<unknown> = Promise.resolve()
   private watchers = new Set<() => void>()
   /** How many reviews have finished in this session; lets lists know when to refresh. */
@@ -158,16 +159,30 @@ export class ReviewService {
 
   /** Current state, then every change. Returns an unsubscribe function. */
   subscribe(id: string, listener: (s: JobState) => void): () => void {
+    let active = true
     void this.open(id).then((state) => {
+      if (!active) return
       const job = this.jobs.get(id)
       if (job) {
+        const pending = this.pendingListeners.get(id)
+        pending?.delete(listener)
+        if (pending?.size === 0) this.pendingListeners.delete(id)
         job.listeners.add(listener)
         listener(job.state)
       } else {
+        const pending = this.pendingListeners.get(id) ?? new Set()
+        pending.add(listener)
+        this.pendingListeners.set(id, pending)
         listener(state)
       }
     })
-    return () => this.jobs.get(id)?.listeners.delete(listener)
+    return () => {
+      active = false
+      this.jobs.get(id)?.listeners.delete(listener)
+      const pending = this.pendingListeners.get(id)
+      pending?.delete(listener)
+      if (pending?.size === 0) this.pendingListeners.delete(id)
+    }
   }
 
   cancel(id: string): void {
@@ -177,8 +192,11 @@ export class ReviewService {
   }
 
   private track(id: string, state: JobState): Job {
-    const job: Job = { state, listeners: new Set(), controller: new AbortController() }
+    const listeners = this.pendingListeners.get(id) ?? new Set()
+    this.pendingListeners.delete(id)
+    const job: Job = { state, listeners, controller: new AbortController() }
     this.jobs.set(id, job)
+    for (const listener of [...listeners]) listener(state)
     for (const w of [...this.watchers]) w()
     return job
   }

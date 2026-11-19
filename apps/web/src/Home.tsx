@@ -1,6 +1,6 @@
 import { InvalidPgnError, ReviewFileError, importJson, type PresetName } from '@chessreview/core'
 import { useState } from 'react'
-import { openReview } from './App'
+import { openReview, type ReviewShare } from './App'
 import { useAsync, useQueue } from './hooks'
 import { usePrefs } from './prefs'
 import { AppHeader } from './AppHeader'
@@ -12,6 +12,7 @@ import {
   engineIdFor,
   fetchLichessGames,
   fetchMonth,
+  gameIdFromUrl,
   getReviewService,
   listMonths,
   type RemoteGame,
@@ -325,12 +326,12 @@ export function Home() {
     }
   }
 
-  async function open(pgnText: string, me: string | null) {
+  async function open(pgnText: string, me: string | null, share: ReviewShare | null = null) {
     setOpening(true)
     setOpenError('')
     try {
       const id = await (await getReviewService()).start(pgnText, preset, engineId)
-      openReview(id, me)
+      openReview(id, me, share)
     } catch (e) {
       setOpenError(messageOf(e))
       setOpening(false)
@@ -504,7 +505,19 @@ export function Home() {
                         <button
                           className={`gamerow${summary ? ' reviewed' : ''}`}
                           disabled={busy}
-                          onClick={() => void open(g.pgn, loaded)}
+                          onClick={() => {
+                            const platform = query!.source
+                            const game = gameIdFromUrl(platform, g.url)
+                            const share: ReviewShare | null = game
+                              ? {
+                                  platform,
+                                  depth: preset,
+                                  game,
+                                  ...(platform === 'chesscom' && data?.month ? { month: data.month } : {}),
+                                }
+                              : null
+                            void open(g.pgn, loaded, share)
+                          }}
                         >
                           <span className="g-result">
                             <span className={`pill ${o.tone}`}>{o.word}</span>

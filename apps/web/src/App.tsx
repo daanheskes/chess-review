@@ -1,8 +1,21 @@
-import type { PuzzlePerspective } from '@chessreview/core'
+import type { PresetName, PuzzlePerspective } from '@chessreview/core'
 import { Suspense, lazy, useEffect, useState } from 'react'
 import { Home } from './Home'
 import { applyUpdate, useUpdateReady } from './offline'
 import { ReviewPage } from './Review'
+import type { ReviewPlatform } from './services/shared-game'
+
+export interface ReviewShare {
+  platform: ReviewPlatform
+  depth: PresetName
+  game: string
+  month?: string
+}
+
+const isReviewPlatform = (value: string | null): value is ReviewPlatform =>
+  value === 'chesscom' || value === 'lichess'
+const isPresetName = (value: string | null): value is PresetName =>
+  value === 'quick' || value === 'standard' || value === 'deep'
 
 // Insights is a page of its own, loaded only when opened.
 const InsightsPage = lazy(() => import('./Insights').then((m) => ({ default: m.InsightsPage })))
@@ -12,12 +25,31 @@ const LearnPage = lazy(() => import('./Learn').then((m) => ({ default: m.LearnPa
 // Routes live in the hash so a reload keeps you on the same review:
 //   #/                      game list
 //   #/review/<id>?u=<name>  one review (u = whose games you were browsing)
+//   Shared game links add platform, depth and game; chess.com links also need month.
 //   #/insights              statistics across every stored review
 //   #/train[?tab=mistakes&tactic=<kind>&p=<side>&u=<name>]  puzzles or recent mistake positions
 //   #/openings[/<opening>[/<line>]]  study and practice opening lines
 function parse(hash: string) {
-  const m = hash.match(/^#\/review\/([a-f0-9]+)(?:\?u=(.*))?$/)
-  return m && m[1] ? { id: m[1], me: m[2] ? decodeURIComponent(m[2]) : null } : null
+  const m = hash.match(/^#\/review\/([a-f0-9]+)(?:\?(.*))?$/)
+  if (!m?.[1]) return null
+  const q = new URLSearchParams(m[2] ?? '')
+  const platform = q.get('platform')
+  const depth = q.get('depth')
+  const game = q.get('game')
+  const month = q.get('month')
+  const share: ReviewShare | null =
+    isReviewPlatform(platform) &&
+    isPresetName(depth) &&
+    !!game &&
+    (platform !== 'chesscom' || (!!month && !!q.get('u')))
+      ? {
+          platform,
+          depth,
+          game,
+          ...(month ? { month } : {}),
+        }
+      : null
+  return { id: m[1], me: q.get('u'), share }
 }
 
 /** What a `#/train?tactic=<kind>&p=<side>&u=<name>` link asks for: one tactic (null for all puzzles), which side of it, and whose. */
@@ -83,7 +115,7 @@ export function App({ lichessLoginError = null }: { lichessLoginError?: string |
           />
         </Suspense>
       ) : route ? (
-        <ReviewPage id={route.id} me={route.me} />
+        <ReviewPage id={route.id} me={route.me} share={route.share} />
       ) : (
         <Home />
       )}
@@ -91,6 +123,18 @@ export function App({ lichessLoginError = null }: { lichessLoginError?: string |
   )
 }
 
-export function openReview(id: string, me: string | null) {
-  location.hash = `#/review/${id}${me ? `?u=${encodeURIComponent(me)}` : ''}`
+export function reviewHash(id: string, me: string | null, share: ReviewShare | null = null) {
+  const q = new URLSearchParams()
+  if (me) q.set('u', me)
+  if (share) {
+    q.set('platform', share.platform)
+    q.set('depth', share.depth)
+    q.set('game', share.game)
+    if (share.month) q.set('month', share.month)
+  }
+  return `#/review/${id}${q.size ? `?${q}` : ''}`
+}
+
+export function openReview(id: string, me: string | null, share: ReviewShare | null = null) {
+  location.hash = reviewHash(id, me, share)
 }

@@ -55,6 +55,8 @@ export { ChessComError, fetchMonth, listMonths, type RemoteGame } from './chessc
 export { engineIdFor, fullEngine } from './engine'
 export { EngineDownloadError, type Progress } from './full-engine'
 export { LichessError, fetchLichessGames } from './lichess'
+export { fetchSharedGame, gameIdFromUrl } from './shared-game'
+export type { ReviewPlatform } from './shared-game'
 export { beginLichessLogin, clearLichessToken, finishLichessLogin, getLichessToken } from './lichess-auth'
 export {
   fetchOpeningMove,
