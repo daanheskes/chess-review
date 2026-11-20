@@ -1089,6 +1089,7 @@ function OpeningBoard({
   const prefs = usePrefs()
   const squares = BOARDS[prefs.board]
   const level = savedLevel?.level ?? 0
+  const [engineFallback, setEngineFallback] = useState(false)
   const [phase, setPhase] = useState<'ready' | 'playing' | 'result'>('ready')
   const [result, setResult] = useState('')
   const [ply, setPly] = useState(0)
@@ -1230,69 +1231,94 @@ function OpeningBoard({
   }, [wrong])
 
   const playExplorerMove = async (position: string, playedMoves: typeof allMoves) => {
-    if (!auth.token) {
-      setLichessError('Connect to Lichess to continue this training level.')
-      return
-    }
-    const controller = new AbortController()
-    explorerRequest.current?.abort()
-    explorerRequest.current = controller
-    setFetchingExplorer(true)
-    setLichessError('')
-    const rating = ratingGroupForLevel(level as ExplorerLevel)
-    const started = performance.now()
-    try {
-      const move = await fetchOpeningMove(position, rating, auth.token, controller.signal)
+  if (!auth.token) {
+    setLichessError('Connect to Lichess to continue this training level.')
+    return
+  }
+  const controller = new AbortController()
+  explorerRequest.current?.abort()
+  explorerRequest.current = controller
+  setFetchingExplorer(true)
+  setEngineFallback(false)
+  setLichessError('')
+  setEngineError('')
+  const rating = ratingGroupForLevel(level as ExplorerLevel)
+  const started = performance.now()
+  let usedEngineFallback = false
+
+  try {
+    const move = await fetchOpeningMove(position, rating, auth.token, controller.signal)
+    if (controller.signal.aborted) return
+
+    let moveUci: string | undefined = move?.uci
+
+    if (!moveUci) {
+      usedEngineFallback = true
+      setEngineFallback(true)
+      const analysis = getLiveAnalysis()
+      const evaluation = await analysis.analyse(position, PRESETS[prefs.preset], controller.signal)
       if (controller.signal.aborted) return
-      if (!move) {
-        setLichessError(
-          `No rapid games in the Lichess rating group ${rating} continue this position. Restart to try another line.`,
+      moveUci = evaluation.line[0]
+      if (!moveUci) {
+        setEngineError(
+          `No rapid games in the Lichess rating group ${rating} continue this position, and Stockfish did not return a move.`,
         )
         return
       }
-      const next = play(explore(position), move.uci.slice(0, 2), move.uci.slice(2, 4), move.uci[4])
-      if (!next) {
+    }
+
+    const next = play(explore(position), moveUci.slice(0, 2), moveUci.slice(2, 4), moveUci[4])
+    if (!next) {
+      if (usedEngineFallback) {
+        setEngineError('Stockfish returned a move that is illegal in this position.')
+      } else {
         setLichessError('Lichess returned a move that is illegal in this position.')
-        return
       }
-      if (
-        !(await waitForDelay(
-          Math.max(0, OPPONENT_DELAY - (performance.now() - started)),
-          controller.signal,
-        )) ||
-        controller.signal.aborted
-      )
-        return
-      const nextFen = fenOf(next)
-      const newMove: (typeof game.moves)[number] = {
-        ply: playedMoves.length + 1,
-        color: position.split(' ')[1] === 'b' ? 'b' : 'w',
-        number: Number(position.split(' ')[5] ?? 1),
-        san: sanOf(position, move.uci),
-        uci: move.uci,
-        promotion: move.uci.length === 5,
-        fenBefore: position,
-        fenAfter: nextFen,
-        clockMs: null,
-      }
-      setExtraMoves((current) => [...current, newMove])
-      setExtraFens((current) => [...current, nextFen])
-      setPly((current) => current + 1)
-      if (terminal(nextFen)) finishIncomplete()
-    } catch (error) {
-      if (controller.signal.aborted) return
-      if (error instanceof LichessExplorerError && error.kind === 'unauthorized') {
-        clearLichessToken()
-        setAuth({ token: null, error: '' })
-      }
+      return
+    }
+    if (
+      !(await waitForDelay(
+        Math.max(0, OPPONENT_DELAY - (performance.now() - started)),
+        controller.signal,
+      )) ||
+      controller.signal.aborted
+    )
+      return
+    const nextFen = fenOf(next)
+    const newMove: (typeof game.moves)[number] = {
+      ply: playedMoves.length + 1,
+      color: position.split(' ')[1] === 'b' ? 'b' : 'w',
+      number: Number(position.split(' ')[5] ?? 1),
+      san: sanOf(position, moveUci),
+      uci: moveUci,
+      promotion: moveUci.length === 5,
+      fenBefore: position,
+      fenAfter: nextFen,
+      clockMs: null,
+    }
+    setExtraMoves((current) => [...current, newMove])
+    setExtraFens((current) => [...current, nextFen])
+    setPly((current) => current + 1)
+    if (terminal(nextFen)) finishIncomplete()
+  } catch (error) {
+    if (controller.signal.aborted) return
+    if (!usedEngineFallback && error instanceof LichessExplorerError && error.kind === 'unauthorized') {
+      clearLichessToken()
+      setAuth({ token: null, error: '' })
+    }
+    if (usedEngineFallback) {
+      setEngineError(error instanceof Error ? error.message : 'Stockfish could not choose a reply move.')
+    } else {
       setLichessError(error instanceof Error ? error.message : 'Lichess Opening Explorer failed.')
-    } finally {
-      if (explorerRequest.current === controller) {
-        explorerRequest.current = null
-        setFetchingExplorer(false)
-      }
+    }
+  } finally {
+    if (explorerRequest.current === controller) {
+      explorerRequest.current = null
+      setFetchingExplorer(false)
+      setEngineFallback(false)
     }
   }
+}
 
   const tryMove = (from: string, to: string) => {
     if (!canPlay) return false
@@ -1676,7 +1702,9 @@ function OpeningBoard({
                     {evaluating
                       ? 'Stockfish is evaluating your move…'
                       : fetchingExplorer
-                        ? 'Looking up a Lichess reply…'
+                        ? engineFallback
+                          ? 'No rapid games in this rating group; Stockfish is choosing a move…'
+                          : 'Looking up a Lichess reply…'
                         : wrong
                           ? attempt === 'inaccurate'
                             ? 'Inaccuracy. Taking your move back…'
@@ -1800,6 +1828,7 @@ function OpeningBoard({
                   setReview(null)
                   setEvaluating(false)
                   setFetchingExplorer(false)
+                  setEngineFallback(false)
                   setPhase('ready')
                 }}
               >
